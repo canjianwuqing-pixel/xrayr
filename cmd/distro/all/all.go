@@ -44,6 +44,7 @@ import (
 
 	// Transports
 	_ "github.com/xtls/xray-core/transport/internet/grpc"
+	_ "github.com/xtls/xray-core/transport/internet/httpupgrade"
 	_ "github.com/xtls/xray-core/transport/internet/kcp"
 	_ "github.com/xtls/xray-core/transport/internet/reality"
 	_ "github.com/xtls/xray-core/transport/internet/splithttp"
@@ -52,14 +53,12 @@ import (
 	_ "github.com/xtls/xray-core/transport/internet/udp"
 	_ "github.com/xtls/xray-core/transport/internet/websocket"
 
-	// Transport headers
+	// Transport headers; legacy UDP headers are now registered by corecompat via finalmask.
+	_ "github.com/xtls/xray-core/transport/internet/finalmask/mkcp/aes128gcm"
+	_ "github.com/xtls/xray-core/transport/internet/finalmask/mkcp/header"
+	_ "github.com/xtls/xray-core/transport/internet/finalmask/mkcp/original"
 	_ "github.com/xtls/xray-core/transport/internet/headers/http"
 	_ "github.com/xtls/xray-core/transport/internet/headers/noop"
-	_ "github.com/xtls/xray-core/transport/internet/headers/srtp"
-	_ "github.com/xtls/xray-core/transport/internet/headers/tls"
-	_ "github.com/xtls/xray-core/transport/internet/headers/utp"
-	_ "github.com/xtls/xray-core/transport/internet/headers/wechat"
-	_ "github.com/xtls/xray-core/transport/internet/headers/wireguard"
 
 	// JSON & TOML & YAML
 	_ "github.com/xtls/xray-core/main/json"
