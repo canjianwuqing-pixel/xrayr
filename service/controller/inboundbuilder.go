@@ -275,9 +275,6 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 		}
 		streamSetting.SocketSettings = sockoptConfig
 	}
-	if err := corecompat.NormalizeStream(streamSetting); err != nil {
-		return nil, err
-	}
 	inboundDetourConfig.StreamSetting = streamSetting
 
 	return corecompat.BuildInbound(inboundDetourConfig)

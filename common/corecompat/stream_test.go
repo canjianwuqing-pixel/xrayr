@@ -117,9 +117,9 @@ func TestRejectAmbiguousLegacyAndModernMasks(t *testing.T) {
 	}
 }
 
-func TestRemovedKCPTuningIsNotSilentlyDiscarded(t *testing.T) {
-	if err := ValidateTransportJSON([]byte(`[{"streamSettings":{"network":"kcp","kcpSettings":{"congestion":true}}}]`)); err == nil {
-		t.Fatal("silently discarded legacy congestion")
+func TestLegacyKCPTuningIsValidated(t *testing.T) {
+	if err := ValidateTransportJSON([]byte(`[{"streamSettings":{"network":"kcp","kcpSettings":{"Congestion":true}}}]`)); err != nil {
+		t.Fatal(err)
 	}
 	if err := ValidateTransportJSON([]byte(`[{"streamSettings":{"network":"kcp","kcpSettings":{"header":{"type":"srtp"}}}}]`)); err != nil {
 		t.Fatal(err)

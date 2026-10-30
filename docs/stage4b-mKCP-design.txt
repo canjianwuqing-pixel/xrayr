@@ -1,0 +1,30 @@
+mKCP 独立兼容实现设计（先于接入编写）
+
+边界：保留固定旧核心e80ca67feed9的完整KCP算法与帧处理，置于legacykcp，
+MPL-2.0来源不变。protobuf使用kuaiyun.compat.kcp命名空间，运行时注册
+kuaiyun-kcp，避免覆盖26.7.28的mkcp。主核心和所有其他协议仍使用目标版本。
+
+接口：业务构建器识别旧network=kcp/mkcp，配置先验证，再构建本地兼容Config；
+仍由目标核心构建安全层、socket和入站/出站，最后替换transport设置。
+原始JSON入口必须在目标conf丢弃字段前读取；不能仅在解码后检查。
+显式finalmask且无任何旧字段选择现代目标实现；与旧字段混用明确报错。
+不借用CwndMultiplier表达布尔开关，不静默选择新拥塞算法。
+
+旧Congestion=false/true、OnPacketLoss上下界、Flush乘20、发送/接收窗口，
+完整保留原算法。旧readBufferSize只保存并说明无运行调用，绝不伪装为其他参数。
+writeBufferSize未设2MiB、0为512KiB、正数MiB；与maxSendingWindow同时出现
+拒绝歧义；现代字节窗口可转换为旧WriteBuffer字节语义，检查溢出与MTU。
+
+三态seed直接保留protobuf指针：nil为旧原始帧，空/非空指针均为AES-GCM。
+旧MSS继续扣writer.Overhead；修正旧代码漏扣AES nonce的问题，使最终UDP载荷
+不超过MTU。加密帧格式及旧端可解析语义不变，但AES最大数据分段比旧实现少12字节。
+这是一项明确的MTU边界修复，不能宣称所有分段长度与旧版本逐字节相同。
+
+所有字段大小写归一并拒绝重复/未知KCP字段、类型错误及冲突。
+可选字段null保持旧JSON的未设置语义；seed空字符串仍保留AES-GCM语义。
+验证MTU旧合法范围576..1460、TTI10..100、容量乘法溢出、窗口>=MTU。
+不修改用户文件。目标新参数只能进入明确的现代finalmask分支，不能假装旧语义。
+
+测试：旧算法阈值/上下界、三态seed帧、所有header/MTU线包尺寸、写缓存边界、
+JSON大小写/重复/未知/冲突、旧包解析与本地UDP往返、共享header多连接race。
+真实旧客户端、丢包乱序、长时间压力、Debian实机作为后续验收，不能由构造代替。

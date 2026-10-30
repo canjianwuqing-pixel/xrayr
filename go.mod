@@ -17,6 +17,7 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/r3labs/diff/v2 v2.15.1
 	github.com/redis/go-redis/v9 v9.5.1
+	github.com/riobard/go-bloom v0.0.0-20200614022211-cdc8013cb5b3
 	github.com/sagernet/sing v0.5.1
 	github.com/sagernet/sing-shadowsocks v0.2.7
 	github.com/shirou/gopsutil/v3 v3.24.2
@@ -28,6 +29,7 @@ require (
 	github.com/xtls/xray-core v1.260327.1-0.20260728075948-5ca6f4b7d4dc
 	golang.org/x/crypto v0.54.0
 	golang.org/x/net v0.57.0
+	golang.org/x/sync v0.22.0
 	golang.org/x/time v0.14.0
 	google.golang.org/protobuf v1.36.11
 )
@@ -214,7 +216,6 @@ require (
 	github.com/prometheus/procfs v0.13.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af // indirect
-	github.com/riobard/go-bloom v0.0.0-20200614022211-cdc8013cb5b3 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sacloud/api-client-go v0.2.10 // indirect
@@ -274,7 +275,6 @@ require (
 	golang.org/x/exp v0.0.0-20240531132922-fd00a4e0eefc // indirect
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect

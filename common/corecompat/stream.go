@@ -28,6 +28,11 @@ func NormalizeStream(s *conf.StreamConfig) error {
 		k = &conf.KCPConfig{}
 		s.KCPSettings = k
 	}
+	// Full legacy streams are handled by BuildInbound/BuildOutbound. The modern
+	// mask JSON loader cannot distinguish an absent value from an empty seed.
+	if k.Seed != nil && *k.Seed == "" {
+		return fmt.Errorf("empty KCP seed requires the legacy compatibility builder")
+	}
 	if s.FinalMask != nil && len(s.FinalMask.Udp) > 0 {
 		if k.HeaderConfig != nil || k.Seed != nil {
 			return fmt.Errorf("legacy KCP header/seed and explicit UDP finalmask cannot be combined")

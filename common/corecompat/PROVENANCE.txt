@@ -35,3 +35,22 @@ Retaining these implementations adds maintenance obligations: do not assume
 upstream fixes to the new Shadowsocks implementation automatically fix the
 compatibility implementation. They require independent review and real-client
 tests before production release. No external-client test is claimed here.
+
+Stage 4B additions and modifications:
+  transport/internet/kcp/* -> legacykcp/*, from the same e80ca67feed9 baseline,
+  including the original tests and XOR assembly. Its protobuf package/file name
+  is kuaiyun.compat.kcp / common/corecompat/legacykcp/config.proto and runtime
+  transport name is kuaiyun-kcp; it never replaces target-core mkcp registration.
+  Congestion/sending/receiving algorithms are retained. MTU accounting now
+  includes the AES nonce. Dial errors close the owned connection, and packet
+  headers are constructed through the local serializer factories.
+  transport/internet/headers/dns/* -> legacyheader/dns/*, same original source.
+  Its original descriptor identity is retained (absent from target-core).
+  Stateful SRTP/DTLS/Wechat serialization is synchronized inside Serialize only.
+  SS replay state uses a bounded lazy store; SS2022 uses managed Link-based IO.
+  See docs/stage4b-* for explicit design, limits and test evidence.
+
+For legacykcp regeneration, invoke protoc from the repository root with both
+the repository and pinned core source as import roots, and source_relative Go
+output for common/corecompat/legacykcp/config.proto. The explicit ;kcp Go package
+suffix is required. Regeneration tools are build-time only, not runtime modules.

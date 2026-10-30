@@ -95,55 +95,28 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 	if err != nil {
 		log.Panicf("Failed to understand Routing config  Please check: https://xtls.github.io/config/routing.html for help: %s", err)
 	}
-	// Custom Inbound config
-	var coreCustomInboundConfig []conf.InboundDetourConfig
-	if panelConfig.InboundConfigPath != "" {
-		if data, err := os.ReadFile(panelConfig.InboundConfigPath); err != nil {
-			log.Panicf("Failed to read Custom Inbound config file at: %s", panelConfig.InboundConfigPath)
-		} else {
-			if err = json.Unmarshal(data, &coreCustomInboundConfig); err != nil {
-				log.Panicf("Failed to unmarshal Custom Inbound config: %s", panelConfig.InboundConfigPath)
-			}
-			if err = corecompat.ValidateTransportJSON(data); err != nil {
-				log.Panicf("Custom inbound compatibility: %s", err)
-			}
-		}
-	}
+	// Read raw transport settings before target conf structs can discard legacy fields.
 	var inBoundConfig []*core.InboundHandlerConfig
-	for _, config := range coreCustomInboundConfig {
-		if err := corecompat.NormalizeStream(config.StreamSetting); err != nil {
-			log.Panicf("invalid legacy transport config: %s", err)
-		}
-		oc, err := corecompat.BuildInbound(&config)
+	if panelConfig.InboundConfigPath != "" {
+		data, err := os.ReadFile(panelConfig.InboundConfigPath)
 		if err != nil {
-			log.Panicf("Failed to understand Inbound config, Please check: https://xtls.github.io/config/inbound.html for help: %s", err)
+			log.Panicf("Failed to read Custom Inbound config: %s", err)
 		}
-		inBoundConfig = append(inBoundConfig, oc)
-	}
-	// Custom Outbound config
-	var coreCustomOutboundConfig []conf.OutboundDetourConfig
-	if panelConfig.OutboundConfigPath != "" {
-		if data, err := os.ReadFile(panelConfig.OutboundConfigPath); err != nil {
-			log.Panicf("Failed to read Custom Outbound config file at: %s", panelConfig.OutboundConfigPath)
-		} else {
-			if err = json.Unmarshal(data, &coreCustomOutboundConfig); err != nil {
-				log.Panicf("Failed to unmarshal Custom Outbound config: %s", panelConfig.OutboundConfigPath)
-			}
-			if err = corecompat.ValidateTransportJSON(data); err != nil {
-				log.Panicf("Custom outbound compatibility: %s", err)
-			}
+		inBoundConfig, err = corecompat.BuildInboundJSON(data)
+		if err != nil {
+			log.Panicf("Custom inbound compatibility: %s", err)
 		}
 	}
 	var outBoundConfig []*core.OutboundHandlerConfig
-	for _, config := range coreCustomOutboundConfig {
-		if err := corecompat.NormalizeStream(config.StreamSetting); err != nil {
-			log.Panicf("invalid legacy transport config: %s", err)
-		}
-		oc, err := corecompat.BuildOutbound(&config)
+	if panelConfig.OutboundConfigPath != "" {
+		data, err := os.ReadFile(panelConfig.OutboundConfigPath)
 		if err != nil {
-			log.Panicf("Failed to understand Outbound config, Please check: https://xtls.github.io/config/outbound.html for help: %s", err)
+			log.Panicf("Failed to read Custom Outbound config: %s", err)
 		}
-		outBoundConfig = append(outBoundConfig, oc)
+		outBoundConfig, err = corecompat.BuildOutboundJSON(data)
+		if err != nil {
+			log.Panicf("Custom outbound compatibility: %s", err)
+		}
 	}
 	// Policy config
 	levelPolicyConfig := parseConnectionConfig(panelConfig.ConnectionConfig)

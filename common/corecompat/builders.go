@@ -12,7 +12,7 @@ import (
 
 // BuildInbound preserves legacy Shadowsocks ciphers and replay checking. The
 // target core still builds receiver/transport settings; only the proxy changes.
-func BuildInbound(c *conf.InboundDetourConfig) (*core.InboundHandlerConfig, error) {
+func buildInboundNative(c *conf.InboundDetourConfig) (*core.InboundHandlerConfig, error) {
 	if err := NormalizeStream(c.StreamSetting); err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func BuildInbound(c *conf.InboundDetourConfig) (*core.InboundHandlerConfig, erro
 	return finishInbound(result, nil)
 }
 
-func BuildOutbound(c *conf.OutboundDetourConfig) (*core.OutboundHandlerConfig, error) {
+func buildOutboundNative(c *conf.OutboundDetourConfig) (*core.OutboundHandlerConfig, error) {
 	if err := NormalizeStream(c.StreamSetting); err != nil {
 		return nil, err
 	}
