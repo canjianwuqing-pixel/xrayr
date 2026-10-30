@@ -13,6 +13,27 @@ import (
 	"github.com/xtls/xray-core/infra/conf"
 )
 
+func TestRejectSignedInvalidUoTVersions(t *testing.T) {
+	key := make([]byte, 16)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []int{-1, 3, 256} {
+		var config LegacyShadowsocksClientConfig
+		raw := map[string]interface{}{"servers": []interface{}{map[string]interface{}{"address": "127.0.0.1", "port": 12345, "method": "2022-blake3-aes-128-gcm", "password": base64.StdEncoding.EncodeToString(key), "uot": true, "uotVersion": version}}}
+		data, err := json.Marshal(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = json.Unmarshal(data, &config); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = config.Build(); err == nil {
+			t.Fatal("invalid signed version accepted", version)
+		}
+	}
+}
+
 func TestLegacyShadowsocksInboundOutboundAndIVCheck(t *testing.T) {
 	for _, method := range []string{"none", "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305"} {
 		t.Run(method, func(t *testing.T) {
