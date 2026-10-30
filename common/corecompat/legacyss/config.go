@@ -123,7 +123,7 @@ func (a *Account) AsAccount() (protocol.Account, error) {
 		Key:        passwordToCipherKey([]byte(a.Password), Cipher.KeySize()),
 		Password:   a.Password,
 		replayFilter: func() *antireplay.Filter {
-			if a.IvCheck {
+			if a.IvCheck && Cipher.IVSize() > 0 {
 				return antireplay.NewFilter(uint32(a.CipherType), passwordToCipherKey([]byte(a.Password), Cipher.KeySize()))
 			}
 			return nil
