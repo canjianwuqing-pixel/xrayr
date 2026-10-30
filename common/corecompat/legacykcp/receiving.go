@@ -130,6 +130,8 @@ func (l *AckList) Flush(current uint32, rto uint32) {
 
 type ReceivingWorker struct {
 	sync.RWMutex
+	readMu     sync.Mutex
+	closed     bool
 	conn       *Connection
 	leftOver   buf.MultiBuffer
 	window     *ReceivingWindow
@@ -150,8 +152,13 @@ func NewReceivingWorker(kcp *Connection) *ReceivingWorker {
 
 func (w *ReceivingWorker) Release() {
 	w.Lock()
+	w.closed = true
 	buf.ReleaseMulti(w.leftOver)
 	w.leftOver = nil
+	for _, seg := range w.window.cache {
+		seg.Release()
+	}
+	clear(w.window.cache)
 	w.Unlock()
 }
 
@@ -165,10 +172,15 @@ func (w *ReceivingWorker) ProcessSendingNext(number uint32) {
 func (w *ReceivingWorker) ProcessSegment(seg *DataSegment) {
 	w.Lock()
 	defer w.Unlock()
+	if w.closed {
+		seg.Release()
+		return
+	}
 
 	number := seg.Number
 	idx := number - w.nextNumber
 	if idx >= w.windowSize {
+		seg.Release()
 		return
 	}
 	w.acklist.Clear(seg.SendingNext)
@@ -180,6 +192,18 @@ func (w *ReceivingWorker) ProcessSegment(seg *DataSegment) {
 }
 
 func (w *ReceivingWorker) ReadMultiBuffer() buf.MultiBuffer {
+	w.readMu.Lock()
+	defer w.readMu.Unlock()
+	return w.readMultiBuffer()
+}
+
+// Caller owns readMu; state/buffer ownership is also synchronized with Release.
+func (w *ReceivingWorker) readMultiBuffer() buf.MultiBuffer {
+	w.Lock()
+	defer w.Unlock()
+	if w.closed {
+		return nil
+	}
 	if w.leftOver != nil {
 		mb := w.leftOver
 		w.leftOver = nil
@@ -188,8 +212,6 @@ func (w *ReceivingWorker) ReadMultiBuffer() buf.MultiBuffer {
 
 	mb := make(buf.MultiBuffer, 0, 32)
 
-	w.Lock()
-	defer w.Unlock()
 	for {
 		seg := w.window.Remove(w.nextNumber)
 		if seg == nil {
@@ -204,13 +226,21 @@ func (w *ReceivingWorker) ReadMultiBuffer() buf.MultiBuffer {
 }
 
 func (w *ReceivingWorker) Read(b []byte) int {
-	mb := w.ReadMultiBuffer()
+	w.readMu.Lock()
+	defer w.readMu.Unlock()
+	mb := w.readMultiBuffer()
 	if mb.IsEmpty() {
 		return 0
 	}
 	mb, nBytes := buf.SplitBytes(mb, b)
 	if !mb.IsEmpty() {
-		w.leftOver = mb
+		w.Lock()
+		if w.closed {
+			buf.ReleaseMulti(mb)
+		} else {
+			w.leftOver = mb
+		}
+		w.Unlock()
 	}
 	return nBytes
 }
@@ -231,6 +261,9 @@ func (w *ReceivingWorker) NextNumber() uint32 {
 func (w *ReceivingWorker) Flush(current uint32) {
 	w.Lock()
 	defer w.Unlock()
+	if w.closed {
+		return
+	}
 
 	w.acklist.Flush(current, w.conn.roundTrip.Timeout())
 }

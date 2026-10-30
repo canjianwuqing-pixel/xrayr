@@ -28,3 +28,8 @@ writeBufferSize未设2MiB、0为512KiB、正数MiB；与maxSendingWindow同时�
 测试：旧算法阈值/上下界、三态seed帧、所有header/MTU线包尺寸、写缓存边界、
 JSON大小写/重复/未知/冲突、旧包解析与本地UDP往返、共享header多连接race。
 真实旧客户端、丢包乱序、长时间压力、Debian实机作为后续验收，不能由构造代替。
+
+真实多连接race测试发现的继承缺陷修复：接收leftOver的读取、回存、释放统一
+受锁保护；终止后不再接收新缓存并释放剩余段；Terminate只执行一次并停止更新
+任务；Read在对端终止且数据读完后返回EOF，与旧ReadMultiBuffer保持一致。
+读写deadline同步访问，更新时唤醒阻塞IO。这些是资源/并发修复，不改变拥塞算法。

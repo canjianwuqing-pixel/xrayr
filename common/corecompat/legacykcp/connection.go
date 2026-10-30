@@ -126,6 +126,8 @@ type Updater struct {
 	shouldTerminate func() bool
 	updateFunc      func()
 	notifier        *semaphore.Instance
+	done            chan struct{}
+	stopOnce        sync.Once
 }
 
 func NewUpdater(interval uint32, shouldContinue func() bool, shouldTerminate func() bool, updateFunc func()) *Updater {
@@ -135,11 +137,17 @@ func NewUpdater(interval uint32, shouldContinue func() bool, shouldTerminate fun
 		shouldTerminate: shouldTerminate,
 		updateFunc:      updateFunc,
 		notifier:        semaphore.New(1),
+		done:            make(chan struct{}),
 	}
 	return u
 }
 
 func (u *Updater) WakeUp() {
+	select {
+	case <-u.done:
+		return
+	default:
+	}
 	select {
 	case <-u.notifier.Wait():
 		go u.run()
@@ -154,12 +162,18 @@ func (u *Updater) run() {
 		return
 	}
 	ticker := time.NewTicker(u.Interval())
+	defer ticker.Stop()
 	for u.shouldContinue() {
 		u.updateFunc()
-		<-ticker.C
+		select {
+		case <-ticker.C:
+		case <-u.done:
+			return
+		}
 	}
-	ticker.Stop()
 }
+
+func (u *Updater) Stop() { u.stopOnce.Do(func() { close(u.done) }) }
 
 func (u *Updater) Interval() time.Duration {
 	return time.Duration(atomic.LoadInt64(&u.interval))
@@ -177,14 +191,16 @@ type ConnMetadata struct {
 
 // Connection is a KCP connection over UDP.
 type Connection struct {
-	meta       ConnMetadata
-	closer     io.Closer
-	rd         time.Time
-	wd         time.Time // write deadline
-	since      int64
-	dataInput  *signal.Notifier
-	dataOutput *signal.Notifier
-	Config     *Config
+	terminateOnce sync.Once
+	deadlineMu    sync.RWMutex
+	meta          ConnMetadata
+	closer        io.Closer
+	rd            time.Time
+	wd            time.Time // write deadline
+	since         int64
+	dataInput     *signal.Notifier
+	dataOutput    *signal.Notifier
+	Config        *Config
 
 	state            State
 	stateBeginTime   uint32
@@ -289,8 +305,9 @@ func (c *Connection) waitForDataInput() error {
 	}
 
 	duration := time.Second * 16
-	if !c.rd.IsZero() {
-		duration = time.Until(c.rd)
+	deadline := c.readDeadline()
+	if !deadline.IsZero() {
+		duration = time.Until(deadline)
 		if duration < 0 {
 			return ErrIOTimeout
 		}
@@ -302,7 +319,8 @@ func (c *Connection) waitForDataInput() error {
 	select {
 	case <-c.dataInput.Wait():
 	case <-timeout.C:
-		if !c.rd.IsZero() && c.rd.Before(time.Now()) {
+		deadline = c.readDeadline()
+		if !deadline.IsZero() && deadline.Before(time.Now()) {
 			return ErrIOTimeout
 		}
 	}
@@ -325,6 +343,9 @@ func (c *Connection) Read(b []byte) (int, error) {
 			c.dataUpdater.WakeUp()
 			return nBytes, nil
 		}
+		if c.State() == StatePeerTerminating {
+			return 0, io.EOF
+		}
 
 		if err := c.waitForDataInput(); err != nil {
 			return 0, err
@@ -343,8 +364,9 @@ func (c *Connection) waitForDataOutput() error {
 	}
 
 	duration := time.Second * 16
-	if !c.wd.IsZero() {
-		duration = time.Until(c.wd)
+	deadline := c.writeDeadline()
+	if !deadline.IsZero() {
+		duration = time.Until(deadline)
 		if duration < 0 {
 			return ErrIOTimeout
 		}
@@ -356,7 +378,8 @@ func (c *Connection) waitForDataOutput() error {
 	select {
 	case <-c.dataOutput.Wait():
 	case <-timeout.C:
-		if !c.wd.IsZero() && c.wd.Before(time.Now()) {
+		deadline = c.writeDeadline()
+		if !deadline.IsZero() && deadline.Before(time.Now()) {
 			return ErrIOTimeout
 		}
 	}
@@ -508,7 +531,10 @@ func (c *Connection) SetReadDeadline(t time.Time) error {
 	if c == nil || c.State() != StateActive {
 		return ErrClosedConnection
 	}
+	c.deadlineMu.Lock()
 	c.rd = t
+	c.deadlineMu.Unlock()
+	c.dataInput.Signal()
 	return nil
 }
 
@@ -517,8 +543,22 @@ func (c *Connection) SetWriteDeadline(t time.Time) error {
 	if c == nil || c.State() != StateActive {
 		return ErrClosedConnection
 	}
+	c.deadlineMu.Lock()
 	c.wd = t
+	c.deadlineMu.Unlock()
+	c.dataOutput.Signal()
 	return nil
+}
+
+func (c *Connection) readDeadline() time.Time {
+	c.deadlineMu.RLock()
+	defer c.deadlineMu.RUnlock()
+	return c.rd
+}
+func (c *Connection) writeDeadline() time.Time {
+	c.deadlineMu.RLock()
+	defer c.deadlineMu.RUnlock()
+	return c.wd
 }
 
 // kcp update, input loop
@@ -530,15 +570,17 @@ func (c *Connection) Terminate() {
 	if c == nil {
 		return
 	}
-	errors.LogInfo(context.Background(), "#", c.meta.Conversation, " terminating connection to ", c.RemoteAddr())
-
-	// v.SetState(StateTerminated)
-	c.dataInput.Signal()
-	c.dataOutput.Signal()
-
-	c.closer.Close()
-	c.sendingWorker.Release()
-	c.receivingWorker.Release()
+	c.terminateOnce.Do(func() {
+		errors.LogInfo(context.Background(), "#", c.meta.Conversation, " terminating connection to ", c.RemoteAddr())
+		atomic.StoreInt32((*int32)(&c.state), int32(StateTerminated))
+		c.dataInput.Signal()
+		c.dataOutput.Signal()
+		c.dataUpdater.Stop()
+		c.pingUpdater.Stop()
+		c.closer.Close()
+		c.sendingWorker.Release()
+		c.receivingWorker.Release()
+	})
 }
 
 func (c *Connection) HandleOption(opt SegmentOption) {

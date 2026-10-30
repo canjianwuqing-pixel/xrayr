@@ -44,6 +44,9 @@ Stage 4B additions and modifications:
   Congestion/sending/receiving algorithms are retained. MTU accounting now
   includes the AES nonce. Dial errors close the owned connection, and packet
   headers are constructed through the local serializer factories.
+  Receiving leftovers/cache ownership and concurrent deadlines are synchronized;
+  termination is idempotent and stops updater tasks. Read returns drained EOF
+  for a terminating peer, matching the existing ReadMultiBuffer behavior.
   transport/internet/headers/dns/* -> legacyheader/dns/*, same original source.
   Its original descriptor identity is retained (absent from target-core).
   Stateful SRTP/DTLS/Wechat serialization is synchronized inside Serialize only.

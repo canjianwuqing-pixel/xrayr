@@ -9,15 +9,13 @@ import (
 	"github.com/wyx2685/XrayR/common/corecompat/legacyheader/srtp"
 	dtls "github.com/wyx2685/XrayR/common/corecompat/legacyheader/tls"
 	"github.com/wyx2685/XrayR/common/corecompat/legacyheader/wechat"
-	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/serial"
 )
 
 func TestLegacyCongestionAlgorithm(t *testing.T) {
-	c := NewConnection(ConnMetadata{}, &KCPPacketWriter{Writer: buf.DiscardBytes}, nopCloser{}, &Config{Congestion: true})
-	defer c.Terminate()
-	c.roundTrip.rto = 100
-	w := c.sendingWorker
+	c := &Connection{Config: &Config{Congestion: true}, roundTrip: &RoundTripInfo{rto: 100}}
+	w := NewSendingWorker(c)
+	defer w.Release()
 	w.controlWindow = 100
 	w.OnPacketLoss(15)
 	if w.controlWindow != 75 {
