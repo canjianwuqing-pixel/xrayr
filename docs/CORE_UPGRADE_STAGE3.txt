@@ -1,0 +1,96 @@
+Kuaiyun XrayR：第三阶段开发说明（非生产验收）
+
+固定基线：4599e9aab31bd2121df53c0df27ead4f2c7de03d
+升级前检查点：28d33ec5fcb30e2df6c7cb52aac781b9ece6017e
+本地检查点标签：kuaiyun/checkpoint-before-core-26.7.28（不自动推送）
+核心发布标签：v26.7.28
+核心模块：github.com/xtls/xray-core
+核心模块版本：v1.260327.1-0.20260728075948-5ca6f4b7d4dc
+核心提交：5ca6f4b7d4dc20a881d4330e498892697627ec0c
+Go 要求：1.26；本次工具链：go1.26.5 windows/amd64。
+
+测试与验证命令
+
+默认安全测试：go test -count=1 ./...
+静态检查：go vet ./...
+依赖完整性：go mod verify
+Linux AMD64 交叉编译（PowerShell，仅生成本地验证程序）：
+  $env:CGO_ENABLED='0'
+  $env:GOOS='linux'
+  $env:GOARCH='amd64'
+  go build -mod=readonly -trimpath -o <本地验证目录>/Kuaiyun-XrayR-linux-amd64 .
+  go version -m <本地验证目录>/Kuaiyun-XrayR-linux-amd64
+不应将上述本地验证二进制当作生产发行包；本阶段不部署、不创建 Release。
+
+外部测试隔离
+
+api 下原有的七个面板测试文件、service/controller/controller_test.go、
+common/mylego/lego_test.go 以 external_integration 构建标签隔离。
+这些测试会连接上游文件中硬编码的面板/证书服务，部分会 POST 数据。
+本阶段没有执行它们。显式添加该标签前，必须先将目标和凭据改为隔离
+测试设施；不能直接对生产服务运行。隔离不是宣称这些集成测试通过。
+原有纯本地测试仍运行；旧 SS 入站测试补齐原先遗漏的 cipher 方法。
+
+本地自动测试覆盖
+
+DNS hosts：IP、别名、未命中、IPv6 queryStrategy、FQDN、LookupIP 的 TTL 返回。
+嗅探：目标匹配器接口、大小写、子域、排除与正常覆盖、空域名。
+REALITY：本地、远程、未启用、启用但缺失配置、无 nil 解引用、ShortIds
+不反向修改原配置；测试密钥在运行时生成，不存储有效 UUID 或私钥。
+配置：VLESS/VMess/Trojan/SS 的 TCP、WS、gRPC、HTTPUpgrade、XHTTP 构建；
+真实核心实例中的自定义 DNS、路由、入站、出站，实例不 Start、不监听端口。
+动态用户：真实 VLESS UserManager 并发增删、查询、重复删除拒绝。
+数据路径：DispatchLink 同步完成、双向字节统计、共享用户桶实际等待、
+CanSpliceCopy=3，确保数据经过统计和限速包装。
+并发：统计 Writer 与限制器用户更新、在线列表更新、流量上报快照确认
+期间的并发新增字节保留。
+旧能力：SS AEAD/none 编解码、IV 重放拒绝、旧自定义 SS 入出站构建、
+SS2022 UDP-over-TCP 参数、旧 mKCP header/seed 的数据包往返及 SRTP 头。
+这些为本地 API/数据路径测试，未模拟完整 REALITY/Vision 客户端握手。
+
+适配要点
+
+1. DNS hosts 使用目标核心 StaticHosts，并从 panel 的同一 DNSConfig 初始化；
+   不通过通用 DNS 查询替代纯静态 hosts 查找。使用域名而非带端口目的串。
+2. 嗅探排除使用 DomainMatcher.MatchAny，并保留 IP 排除规则。
+3. GetOrRegisterCounter 改为统计 Manager 的方法。
+4. 目标普通 VLESS 使用同步 DispatchLink；该入口复用 Dispatch 的受保护
+   pipes 并同步搬运数据，统一认证限制、统计、限速和嗅探；不启用绕过
+   包装的 splice。仍支持 Vision 协议，但会有额外拷贝成本，性能需实测。
+5. 限速 Writer 不再忽略 WaitN 错误，大于 Burst 的数据分段等待；支持
+   上下文取消和中断。节点限速仍沿用原有每用户取最小值的业务语义。
+6. 成功上报只扣除已报告的计数快照，避免清零丢掉上报期间的新增流量；
+   失败仍保留计量。在线 AliveList 的发布与读取增加锁和复制。
+7. REALITY 缺失配置显式报错；安全合并 ShortIds，保留本地/远程来源优先级。
+8. HTTPUpgrade 显式注册。目标移除的旧 UDP header 导入由兼容适配器替代。
+9. 新核心移除 SS none/plain 与旧 IV 检查，以及 SS2022 UoT 出站字段。
+   common/corecompat 保留原固定依赖中的相应实现，独立 protobuf 命名空间
+   避免与新核心冲突。见该目录 PROVENANCE.txt 和 LICENSE.xray-core。
+   没有切回旧核心模块，没有修改 Go 缓存源码或使用本地核心 replace。
+
+已知限制与生产风险
+
+- 旧 mKCP congestion/readBufferSize/writeBufferSize 在目标核心没有等价
+  接口，尚未恢复其语义。自定义配置含这些字段时显式拒绝，不能称为
+  全量旧配置兼容。header/seed 可在内存转换，不改用户配置文件。
+- 同时配置旧 header/seed 和显式 UDP finalmask 被拒绝，避免猜测叠加顺序。
+- 旧 HTTP h2/h3/http 和旧 QUIC 在升级前固定核心已被拒绝，本阶段未恢复。
+- SS none/plain 的原有单用户限制沿用；未新增单端口 plain 多用户能力。
+- 兼容 SS、SS2022 UoT 和 UDP 头实现需独立跟踪安全更新，不能假定新核心
+  的所有修复会自动覆盖这些保留实现。未改变已配置的算法和端口。
+- 独立 TCP 并发数限制及全节点共享总带宽上限仍是已知缺口，本阶段未新增。
+- 本机缺少 gcc，CGO=0 无法运行 Go race detector；启用 CGO 后也因缺少
+  C 编译器失败。普通并发测试不等价于 race detector 通过。
+- Windows、Android、Shadowrocket 2.2.93、旧版 Shadowrocket、Linux
+  程序启动、真实 VLESS+REALITY+Vision 握手、真实 V2Board 认证/统计/IP
+  限制以及生产性能均未测试。
+- 未完成完整监控任务生命周期、跨节点共享缓存、面板故障重试和生产负载
+  压力验收。现有跨节点 IP 限制和节点限速模型没有重新设计。
+- 现有 GitHub Actions/Dockerfile 的旧 Go 版本仍待后续构建阶段调整，本
+  阶段未改工作流或 Dockerfile，不宣称远端 CI 已通过。
+
+审核边界
+
+本阶段代码、测试及本地编译验证提交供审核，不构成生产可用性声明。
+不修改 V2Board 后端，不连接生产服务器，不执行生产安装脚本，不修改
+生产配置，不推送 main，不强推，不自动创建正式 Release。
