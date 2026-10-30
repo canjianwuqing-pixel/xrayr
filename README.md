@@ -6,7 +6,9 @@
 - 固定源码提交：`0bb4713626128849da0d2437defea1a1322c44cc`
 - 目标仓库：https://github.com/canjianwuqing-pixel/xrayr
 - 开发分支：`feature/xray-core-26.7.28`
-- 当前阶段：仅导入源码和完整历史，尚未升级核心、编译或完成兼容性测试。
+- 当前阶段：已完成 Xray-core 26.7.28 依赖与 API 适配，以及本地测试、vet 和 Linux AMD64 编译；真实客户端与生产验收尚未完成。
+- 核心固定模块：`github.com/xtls/xray-core v1.260327.1-0.20260728075948-5ca6f4b7d4dc`，要求 Go 1.26。
+- 兼容性范围、外部测试隔离和已知缺口：[第三阶段开发说明](docs/CORE_UPGRADE_STAGE3.txt)。旧 mKCP 部分调优字段尚未兼容，不可据此宣称全量旧配置可用。
 - 原有 MPL-2.0 LICENSE 及上游说明完整保留。
 
 ## 上游历史归档
