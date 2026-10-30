@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"io"
+	"runtime"
 	"testing"
 	"time"
 
@@ -18,6 +19,10 @@ import (
 )
 
 func TestDialAndListen(t *testing.T) {
+	// Keep the same ten clients and 10MiB payload on a reproducible four-CPU
+	// fixture; very high host CPU counts cause artificial loopback UDP bursts.
+	previousProcs := runtime.GOMAXPROCS(4)
+	defer runtime.GOMAXPROCS(previousProcs)
 	listerner, err := NewListener(context.Background(), net.LocalHostIP, net.Port(0), &internet.MemoryStreamConfig{
 		ProtocolName:     "mkcp",
 		ProtocolSettings: &Config{},
@@ -59,7 +64,10 @@ func TestDialAndListen(t *testing.T) {
 			go clientConn.Write(clientSend)
 
 			clientReceived := make([]byte, 1024*1024)
-			common.Must2(io.ReadFull(clientConn, clientReceived))
+			if received, err := io.ReadFull(clientConn, clientReceived); err != nil {
+				c := clientConn.(*Connection)
+				return errors.New("KCP truncated response: bytes=", received, " state=", c.State(), " elapsed=", c.Elapsed()).Base(err)
+			}
 
 			clientExpected := make([]byte, 1024*1024)
 			for idx, b := range clientSend {
@@ -76,7 +84,9 @@ func TestDialAndListen(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for i := 0; i < 60 && listerner.ActiveConnections() > 0; i++ {
+	// Lost final control packets may require idle(30s)+ready(15s)+terminate(8s)
+	// plus updater scheduling. This bounds the existing timers, not a new delay.
+	for i := 0; i < 160 && listerner.ActiveConnections() > 0; i++ {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if v := listerner.ActiveConnections(); v != 0 {

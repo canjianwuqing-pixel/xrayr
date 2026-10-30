@@ -47,6 +47,9 @@ Stage 4B additions and modifications:
   Receiving leftovers/cache ownership and concurrent deadlines are synchronized;
   termination is idempotent and stops updater tasks. Read returns drained EOF
   for a terminating peer, matching the existing ReadMultiBuffer behavior.
+  Elapsed time uses the monotonic clock; idle/close checks use half-range uint32
+  time differences so concurrent timestamp publication cannot underflow into a
+  false timeout. Congestion thresholds and rates remain the original algorithm.
   transport/internet/headers/dns/* -> legacyheader/dns/*, same original source.
   Its original descriptor identity is retained (absent from target-core).
   Stateful SRTP/DTLS/Wechat serialization is synchronized inside Serialize only.

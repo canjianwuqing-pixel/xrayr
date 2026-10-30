@@ -197,7 +197,7 @@ type Connection struct {
 	closer        io.Closer
 	rd            time.Time
 	wd            time.Time // write deadline
-	since         int64
+	since         time.Time
 	dataInput     *signal.Notifier
 	dataOutput    *signal.Notifier
 	Config        *Config
@@ -226,7 +226,7 @@ func NewConnection(meta ConnMetadata, writer PacketWriter, closer io.Closer, con
 	conn := &Connection{
 		meta:       meta,
 		closer:     closer,
-		since:      nowMillisec(),
+		since:      time.Now(),
 		dataInput:  signal.NewNotifier(),
 		dataOutput: signal.NewNotifier(),
 		Config:     config,
@@ -265,7 +265,17 @@ func NewConnection(meta ConnMetadata, writer PacketWriter, closer io.Closer, con
 }
 
 func (c *Connection) Elapsed() uint32 {
-	return uint32(nowMillisec() - c.since)
+	return uint32(time.Since(c.since) / time.Millisecond)
+}
+
+// A timestamp can advance after current was sampled by another goroutine.
+// Half-range arithmetic handles that case and uint32 millisecond rollover.
+func elapsedSince(current, previous uint32) uint32 {
+	age := current - previous
+	if age > 0x7fffffff {
+		return 0
+	}
+	return age
 }
 
 // ReadMultiBuffer implements buf.Reader.
@@ -652,7 +662,7 @@ func (c *Connection) flush() {
 	if c.State() == StateTerminated {
 		return
 	}
-	if c.State() == StateActive && current-atomic.LoadUint32(&c.lastIncomingTime) >= 30000 {
+	if c.State().Is(StateActive, StatePeerClosed) && elapsedSince(current, atomic.LoadUint32(&c.lastIncomingTime)) >= 30000 {
 		c.Close()
 	}
 	if c.State() == StateReadyToClose && c.sendingWorker.IsEmpty() {
@@ -663,16 +673,16 @@ func (c *Connection) flush() {
 		errors.LogDebug(context.Background(), "#", c.meta.Conversation, " sending terminating cmd.")
 		c.Ping(current, CommandTerminate)
 
-		if current-atomic.LoadUint32(&c.stateBeginTime) > 8000 {
+		if elapsedSince(current, atomic.LoadUint32(&c.stateBeginTime)) > 8000 {
 			c.SetState(StateTerminated)
 		}
 		return
 	}
-	if c.State() == StatePeerTerminating && current-atomic.LoadUint32(&c.stateBeginTime) > 4000 {
+	if c.State() == StatePeerTerminating && elapsedSince(current, atomic.LoadUint32(&c.stateBeginTime)) > 4000 {
 		c.SetState(StateTerminating)
 	}
 
-	if c.State() == StateReadyToClose && current-atomic.LoadUint32(&c.stateBeginTime) > 15000 {
+	if c.State() == StateReadyToClose && elapsedSince(current, atomic.LoadUint32(&c.stateBeginTime)) > 15000 {
 		c.SetState(StateTerminating)
 	}
 
@@ -680,7 +690,7 @@ func (c *Connection) flush() {
 	c.receivingWorker.Flush(current)
 	c.sendingWorker.Flush(current)
 
-	if current-atomic.LoadUint32(&c.lastPingTime) >= 3000 {
+	if elapsedSince(current, atomic.LoadUint32(&c.lastPingTime)) >= 3000 {
 		c.Ping(current, CommandPing)
 	}
 }

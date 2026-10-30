@@ -48,3 +48,37 @@ func TestConcurrentDeadlinesWakeBlockedRead(t *testing.T) {
 		t.Fatal("deadline did not wake blocked read")
 	}
 }
+
+func TestFutureTimestampDoesNotExpireConnection(t *testing.T) {
+	c := NewConnection(ConnMetadata{}, &KCPPacketWriter{Writer: buf.DiscardBytes}, nopCloser{}, &Config{})
+	defer c.Terminate()
+	c.dataUpdater.Stop()
+	c.pingUpdater.Stop()
+	// Input may publish a newer time after flush sampled its own current time.
+	atomic.StoreUint32(&c.lastIncomingTime, c.Elapsed()+1000)
+	c.flush()
+	if c.State() != StateActive {
+		t.Fatal("future timestamp falsely triggered idle close", c.State())
+	}
+}
+
+func TestElapsedCounterOrderAndRollover(t *testing.T) {
+	for _, test := range []struct{ now, previous, want uint32 }{{100, 101, 0}, {30000, 0, 30000}, {20, 0xfffffff0, 36}, {100, 100, 0}} {
+		if got := elapsedSince(test.now, test.previous); got != test.want {
+			t.Fatal(test, got)
+		}
+	}
+}
+
+func TestPeerClosedIdleTimeoutReleasesLostTermination(t *testing.T) {
+	c := NewConnection(ConnMetadata{}, &KCPPacketWriter{Writer: buf.DiscardBytes}, nopCloser{}, &Config{})
+	defer c.Terminate()
+	c.SetState(StatePeerClosed)
+	// A peer's last termination packet can be lost. The idle policy must
+	// still reclaim the half-closed connection instead of pinging forever.
+	atomic.StoreUint32(&c.lastIncomingTime, c.Elapsed()-31000)
+	c.flush()
+	if c.State() == StatePeerClosed || c.State() == StateActive {
+		t.Fatal("lost termination left a permanent connection")
+	}
+}
