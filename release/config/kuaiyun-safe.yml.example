@@ -1,0 +1,8 @@
+# Kuaiyun XrayR generic offline template. Add node credentials only on the host.
+Log:
+  Level: warning
+DnsConfigPath:
+RouteConfigPath:
+InboundConfigPath:
+OutboundConfigPath:
+Nodes: []

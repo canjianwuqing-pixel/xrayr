@@ -1,0 +1,15 @@
+Kuaiyun XrayR 安全样例
+
+kuaiyun-safe.yml.example是默认不创建节点、不联系面板的通用起点，Nodes为空。
+请在测试或目标主机的受限目录生成认证凭据并填写本地配置；不要提交到仓库。
+此文件不是已经完成节点业务配置的生产安装包，也不会覆盖任何现有配置。
+
+custom_outbound.json保留通用IPv4/IPv6直连与block，不含WireGuard私钥或WARP出站。
+route.json原示例中指向warp的两条规则现指向IPv4_out，仅影响随附样例。
+其他样例路由仍需要相应geoip/geosite数据。本阶段没有替换任何服务器配置。
+原有详细config.yml.example中的敏感字段值已留空，必须本地配置后才能使用。
+不要把空值样例当成已配置面板认证/REALITY/ACME的生产节点配置。
+
+需要WireGuard或REALITY时，使用相应工具在本地生成新的密钥；需要面板认证时
+从自己管理的面板取得凭据，仅写入本地主机配置。项目没有删除这些协议功能。
+上游历史完整保留，旧提交中的公开样例没有被历史重写或删除。
