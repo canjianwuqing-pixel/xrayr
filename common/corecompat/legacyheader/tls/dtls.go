@@ -3,6 +3,7 @@ package tls
 import (
 	"context"
 	"github.com/wyx2685/XrayR/common/corecompat/legacyheader"
+	"sync"
 
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/dice"
@@ -10,6 +11,7 @@ import (
 
 // DTLS writes header as DTLS. See https://tools.ietf.org/html/rfc6347
 type DTLS struct {
+	mu       sync.Mutex
 	epoch    uint16
 	length   uint16
 	sequence uint32
@@ -22,6 +24,8 @@ func (*DTLS) Size() int32 {
 
 // Serialize implements PacketHeader.
 func (d *DTLS) Serialize(b []byte) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	b[0] = 23 // application data
 	b[1] = 254
 	b[2] = 253

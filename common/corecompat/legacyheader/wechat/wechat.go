@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/binary"
 	"github.com/wyx2685/XrayR/common/corecompat/legacyheader"
+	"sync"
 
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/dice"
 )
 
 type VideoChat struct {
+	mu sync.Mutex
 	sn uint32
 }
 
@@ -19,6 +21,8 @@ func (vc *VideoChat) Size() int32 {
 
 // Serialize implements PacketHeader.
 func (vc *VideoChat) Serialize(b []byte) {
+	vc.mu.Lock()
+	defer vc.mu.Unlock()
 	vc.sn++
 	b[0] = 0xa1
 	b[1] = 0x08
