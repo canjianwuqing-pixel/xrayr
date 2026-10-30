@@ -26,7 +26,7 @@ type MemoryAccount struct {
 	Key        []byte
 	Password   string
 
-	replayFilter antireplay.GeneralizedReplayFilter
+	replayFilter *antireplay.Filter
 }
 
 var ErrIVNotUnique = errors.New("IV is not unique")
@@ -51,10 +51,11 @@ func (a *MemoryAccount) CheckIV(iv []byte) error {
 	if a.replayFilter == nil {
 		return nil
 	}
-	if a.replayFilter.Check(iv) {
-		return nil
+	err := a.replayFilter.CheckError(iv)
+	if err == antireplay.ErrReplay {
+		return ErrIVNotUnique
 	}
-	return ErrIVNotUnique
+	return err
 }
 
 func createAesGcm(key []byte) cipher.AEAD {
@@ -121,9 +122,9 @@ func (a *Account) AsAccount() (protocol.Account, error) {
 		CipherType: a.CipherType,
 		Key:        passwordToCipherKey([]byte(a.Password), Cipher.KeySize()),
 		Password:   a.Password,
-		replayFilter: func() antireplay.GeneralizedReplayFilter {
+		replayFilter: func() *antireplay.Filter {
 			if a.IvCheck {
-				return antireplay.NewBloomRing()
+				return antireplay.NewFilter(uint32(a.CipherType), passwordToCipherKey([]byte(a.Password), Cipher.KeySize()))
 			}
 			return nil
 		}(),

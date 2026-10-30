@@ -122,6 +122,9 @@ func (v *Validator) Get(bs []byte, command protocol.RequestCommand) (u *protocol
 
 			aeadCipher := account.Cipher.(*AEADCipher)
 			ivLen = aeadCipher.IVSize()
+			if command == protocol.RequestCommandTCP && len(bs) < int(ivLen)+18 {
+				continue
+			}
 			iv := bs[:ivLen]
 			subkey := make([]byte, 32)
 			subkey = subkey[:aeadCipher.KeyBytes]
