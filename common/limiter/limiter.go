@@ -28,6 +28,7 @@ type UserInfo struct {
 }
 
 type InboundInfo struct {
+	aliveAccess    sync.RWMutex
 	Tag            string
 	NodeSpeedLimit uint64
 	UserInfo       *sync.Map // Key: Email value: UserInfo
@@ -39,6 +40,22 @@ type InboundInfo struct {
 	}
 	AliveList     map[int]int // Key: Uid, value: alive_ip
 	OldUserOnline *sync.Map   // Key: Ip, value: Uid
+}
+
+// SetAliveList publishes an immutable copy to concurrent dispatchers.
+func (i *InboundInfo) SetAliveList(alive map[int]int) {
+	i.aliveAccess.Lock()
+	defer i.aliveAccess.Unlock()
+	i.AliveList = make(map[int]int, len(alive))
+	for uid, count := range alive {
+		i.AliveList[uid] = count
+	}
+}
+
+func (i *InboundInfo) aliveCount(uid int) int {
+	i.aliveAccess.RLock()
+	defer i.aliveAccess.RUnlock()
+	return i.AliveList[uid]
 }
 
 type Limiter struct {
@@ -185,7 +202,7 @@ func (l *Limiter) GetUserBucket(tag string, email string, ip string, isSourceTCP
 		if isSourceTCP {
 			ipMap := new(sync.Map)
 			ipMap.Store(ip, uid)
-			aliveIp := inboundInfo.AliveList[uid]
+			aliveIp := inboundInfo.aliveCount(uid)
 			// If any device is online
 			if v, ok := inboundInfo.UserOnlineIP.LoadOrStore(email, ipMap); ok {
 				ipMap := v.(*sync.Map)

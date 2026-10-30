@@ -110,12 +110,12 @@ func (c *Controller) getTraffic(email string) (up int64, down int64, upCounter s
 	downName := "user>>>" + email + ">>>traffic>>>downlink"
 	upCounter = c.stm.GetCounter(upName)
 	downCounter = c.stm.GetCounter(downName)
-	if upCounter != nil && upCounter.Value() != 0 {
+	if upCounter != nil {
 		up = upCounter.Value()
 	} else {
 		upCounter = nil
 	}
-	if downCounter != nil && downCounter.Value() != 0 {
+	if downCounter != nil {
 		down = downCounter.Value()
 	} else {
 		downCounter = nil
@@ -123,12 +123,16 @@ func (c *Controller) getTraffic(email string) (up int64, down int64, upCounter s
 	return up, down, upCounter, downCounter
 }
 
-func (c *Controller) resetTraffic(upCounterList *[]stats.Counter, downCounterList *[]stats.Counter) {
-	for _, upCounter := range *upCounterList {
-		upCounter.Set(0)
-	}
-	for _, downCounter := range *downCounterList {
-		downCounter.Set(0)
+type trafficSnapshot struct {
+	counter stats.Counter
+	value   int64
+}
+
+// Acknowledge only the successfully reported snapshot, preserving concurrent
+// increments made while the panel request was in flight.
+func (c *Controller) resetTraffic(snapshots []trafficSnapshot) {
+	for _, snapshot := range snapshots {
+		snapshot.counter.Add(-snapshot.value)
 	}
 }
 

@@ -12,13 +12,18 @@ import (
 type Writer struct {
 	writer  buf.Writer
 	limiter *rate.Limiter
-	w       io.Writer
+	ctx     context.Context
 }
 
 func (l *Limiter) RateWriter(writer buf.Writer, limiter *rate.Limiter) buf.Writer {
+	return l.RateWriterContext(context.Background(), writer, limiter)
+}
+
+func (l *Limiter) RateWriterContext(ctx context.Context, writer buf.Writer, limiter *rate.Limiter) buf.Writer {
 	return &Writer{
 		writer:  writer,
 		limiter: limiter,
+		ctx:     ctx,
 	}
 }
 
@@ -27,7 +32,21 @@ func (w *Writer) Close() error {
 }
 
 func (w *Writer) WriteMultiBuffer(mb buf.MultiBuffer) error {
-	ctx := context.Background()
-	w.limiter.WaitN(ctx, int(mb.Len()))
+	// WaitN rejects requests larger than Burst. Never ignore that error and
+	// forward an unthrottled buffer; reserve the entire payload in bounded chunks.
+	for remaining := int(mb.Len()); remaining > 0; {
+		n := min(remaining, w.limiter.Burst())
+		if n <= 0 {
+			buf.ReleaseMulti(mb)
+			return io.ErrNoProgress
+		}
+		if err := w.limiter.WaitN(w.ctx, n); err != nil {
+			buf.ReleaseMulti(mb)
+			return err
+		}
+		remaining -= n
+	}
 	return w.writer.WriteMultiBuffer(mb)
 }
+
+func (w *Writer) Interrupt() { common.Interrupt(w.writer) }

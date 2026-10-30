@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xtls/xray-core/app/dispatcher"
+	appdns "github.com/xtls/xray-core/app/dns"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
@@ -17,6 +18,7 @@ import (
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/session"
+	"github.com/xtls/xray-core/common/task"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/dns"
 	"github.com/xtls/xray-core/features/outbound"
@@ -105,6 +107,9 @@ type DefaultDispatcher struct {
 	policy      policy.Manager
 	stats       stats.Manager
 	dns         dns.Client
+	hosts       *appdns.StaticHosts
+	hostsOption dns.IPOption
+	hostsSystem bool
 	fdns        dns.FakeDNSEngine
 	Limiter     *limiter.Limiter
 	RuleManager *rule.Manager
@@ -186,14 +191,14 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 			return nil, nil, newError("Devices reach the limit: ", user.Email)
 		}
 		if ok {
-			inboundLink.Writer = d.Limiter.RateWriter(inboundLink.Writer, bucket)
-			outboundLink.Writer = d.Limiter.RateWriter(outboundLink.Writer, bucket)
+			inboundLink.Writer = d.Limiter.RateWriterContext(ctx, inboundLink.Writer, bucket)
+			outboundLink.Writer = d.Limiter.RateWriterContext(ctx, outboundLink.Writer, bucket)
 		}
 
 		p := d.policy.ForLevel(user.Level)
 		if p.Stats.UserUplink {
 			name := "user>>>" + user.Email + ">>>traffic>>>uplink"
-			if c, _ := stats.GetOrRegisterCounter(d.stats, name); c != nil {
+			if c, _ := d.stats.GetOrRegisterCounter(name); c != nil {
 				inboundLink.Writer = &dispatcher.SizeStatWriter{
 					Counter: c,
 					Writer:  inboundLink.Writer,
@@ -202,7 +207,7 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 		}
 		if p.Stats.UserDownlink {
 			name := "user>>>" + user.Email + ">>>traffic>>>downlink"
-			if c, _ := stats.GetOrRegisterCounter(d.stats, name); c != nil {
+			if c, _ := d.stats.GetOrRegisterCounter(name); c != nil {
 				outboundLink.Writer = &dispatcher.SizeStatWriter{
 					Counter: c,
 					Writer:  outboundLink.Writer,
@@ -216,10 +221,14 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 
 func (d *DefaultDispatcher) shouldOverride(ctx context.Context, result SniffResult, request session.SniffingRequest, destination net.Destination) bool {
 	domain := result.Domain()
-	for _, d := range request.ExcludeForDomain {
-		if strings.ToLower(domain) == d {
-			return false
-		}
+	if domain == "" {
+		return false
+	}
+	if request.ExcludeForDomain != nil && request.ExcludeForDomain.MatchAny(strings.ToLower(domain)) {
+		return false
+	}
+	if request.ExcludeForIP != nil && destination.Address.Family().IsIP() && request.ExcludeForIP.Match(destination.Address.IP()) {
+		return false
 	}
 	protocolString := result.Protocol()
 	if resComp, ok := result.(SnifferResultComposite); ok {
@@ -305,59 +314,32 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 }
 
 // DispatchLink implements routing.Dispatcher.
+// DispatchLink is synchronous in the target core. Reuse Dispatch's pipes so
+// authentication limits, statistics and sniffing have exactly one common path.
 func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.Destination, outbound *transport.Link) error {
 	if !destination.IsValid() {
 		return newError("Dispatcher: Invalid destination.")
 	}
-	outbounds := session.OutboundsFromContext(ctx)
-	if len(outbounds) == 0 {
-		outbounds = []*session.Outbound{{}}
-		ctx = session.ContextWithOutbounds(ctx, outbounds)
+	link, err := d.Dispatch(ctx, destination)
+	if err != nil {
+		return err
 	}
-	ob := outbounds[len(outbounds)-1]
-	ob.OriginalTarget = destination
-	ob.Target = destination
-	content := session.ContentFromContext(ctx)
-	if content == nil {
-		content = new(session.Content)
-		ctx = session.ContextWithContent(ctx, content)
+	cleanup := func() {
+		common.Interrupt(link.Reader)
+		common.Interrupt(link.Writer)
+		common.Interrupt(outbound.Reader)
+		common.Interrupt(outbound.Writer)
 	}
-	sniffingRequest := content.SniffingRequest
-	if !sniffingRequest.Enabled {
-		go d.routedDispatch(ctx, outbound, destination)
-	} else {
-		go func() {
-			cReader := &cachedReader{
-				reader: outbound.Reader.(*pipe.Reader),
-			}
-			outbound.Reader = cReader
-			result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination.Network)
-			if err == nil {
-				content.Protocol = result.Protocol()
-			}
-			if err == nil && d.shouldOverride(ctx, result, sniffingRequest, destination) {
-				domain := result.Domain()
-				errors.LogInfo(ctx, "sniffed domain: ", domain)
-				destination.Address = net.ParseAddress(domain)
-				protocol := result.Protocol()
-				if resComp, ok := result.(SnifferResultComposite); ok {
-					protocol = resComp.ProtocolForDomainResult()
-				}
-				isFakeIP := false
-				if fkr0, ok := d.fdns.(dns.FakeDNSEngineRev0); ok && fkr0.IsIPInIPPool(ob.Target.Address) {
-					isFakeIP = true
-				}
-				if sniffingRequest.RouteOnly && protocol != "fakedns" && protocol != "fakedns+others" && !isFakeIP {
-					ob.RouteTarget = destination
-				} else {
-					ob.Target = destination
-				}
-			}
-			d.routedDispatch(ctx, outbound, destination)
-		}()
-	}
-
-	return nil
+	stop := context.AfterFunc(ctx, cleanup)
+	defer stop()
+	defer cleanup()
+	return task.Run(ctx, func() error {
+		defer common.Close(link.Writer)
+		return buf.Copy(outbound.Reader, link.Writer)
+	}, func() error {
+		defer common.Close(outbound.Writer)
+		return buf.Copy(link.Reader, outbound.Writer)
+	})
 }
 
 func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, network net.Network) (SniffResult, error) {
@@ -409,11 +391,17 @@ func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, netw
 func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.Link, destination net.Destination) {
 	outbounds := session.OutboundsFromContext(ctx)
 	ob := outbounds[len(outbounds)-1]
-	if hosts, ok := d.dns.(dns.HostsLookup); ok && destination.Address.Family().IsDomain() {
-		proxied := hosts.LookupHosts(ob.Target.String())
-		if proxied != nil {
+	if destination.Address.Family().IsDomain() && d.hosts != nil {
+		addrs, err := d.lookupHosts(destination.Address.Domain())
+		if err != nil {
+			errors.LogWarning(ctx, "static hosts lookup failed: ", err)
+			common.Close(link.Writer)
+			common.Interrupt(link.Reader)
+			return
+		}
+		if len(addrs) > 0 {
 			ro := ob.RouteTarget == destination
-			destination.Address = *proxied
+			destination.Address = addrs[0]
 			if ro {
 				ob.RouteTarget = destination
 			} else {
@@ -427,7 +415,7 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 	// Check if domain and protocol hit the rule
 	sessionInbound := session.InboundFromContext(ctx)
 	// Whether the inbound connection contains a user
-	if sessionInbound.User != nil {
+	if sessionInbound != nil && sessionInbound.User != nil {
 		if d.RuleManager.Detect(sessionInbound.Tag, destination.String(), sessionInbound.User.Email) {
 			errors.LogError(ctx, fmt.Sprintf("User %s access %s reject by rule", sessionInbound.User.Email, destination.String()))
 			newError("destination is reject by rule")

@@ -120,7 +120,7 @@ func (c *Controller) Start() error {
 	if v2b, ok := c.apiClient.(*newV2board.APIClient); ok {
 		if v, ok := c.dispatcher.Limiter.InboundInfo.Load(c.Tag); ok {
 			inboundinfo := v.(*limiter.InboundInfo)
-			inboundinfo.AliveList = v2b.AliveMap.Alive
+			inboundinfo.SetAliveList(v2b.AliveMap.Alive)
 		}
 	}
 
@@ -222,7 +222,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 	if v2b, ok := c.apiClient.(*newV2board.APIClient); ok {
 		if v, ok := c.dispatcher.Limiter.InboundInfo.Load(c.Tag); ok {
 			inboundinfo := v.(*limiter.InboundInfo)
-			inboundinfo.AliveList = v2b.AliveMap.Alive
+			inboundinfo.SetAliveList(v2b.AliveMap.Alive)
 		}
 	}
 	if err != nil {
@@ -540,8 +540,7 @@ func (c *Controller) userInfoMonitor() (err error) {
 
 	// Get User traffic
 	var userTraffic []api.UserTraffic
-	var upCounterList []stats.Counter
-	var downCounterList []stats.Counter
+	var snapshots []trafficSnapshot
 	AutoSpeedLimit := int64(c.config.AutoSpeedLimitConfig.Limit)
 	UpdatePeriodic := int64(c.config.UpdatePeriodic)
 	limitedUsers := make([]api.UserInfo, 0)
@@ -573,10 +572,10 @@ func (c *Controller) userInfoMonitor() (err error) {
 				Download: down})
 
 			if upCounter != nil {
-				upCounterList = append(upCounterList, upCounter)
+				snapshots = append(snapshots, trafficSnapshot{upCounter, up})
 			}
 			if downCounter != nil {
-				downCounterList = append(downCounterList, downCounter)
+				snapshots = append(snapshots, trafficSnapshot{downCounter, down})
 			}
 		} else {
 			delete(c.warnedUsers, user)
@@ -597,7 +596,7 @@ func (c *Controller) userInfoMonitor() (err error) {
 		if err != nil {
 			c.logger.Print(err)
 		} else {
-			c.resetTraffic(&upCounterList, &downCounterList)
+			c.resetTraffic(snapshots)
 		}
 	}
 

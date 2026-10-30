@@ -17,6 +17,7 @@ import (
 	"github.com/xtls/xray-core/app/stats"
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/infra/conf"
 
 	"github.com/wyx2685/XrayR/api"
@@ -25,6 +26,7 @@ import (
 	"github.com/wyx2685/XrayR/api/sspanel"
 	"github.com/wyx2685/XrayR/api/v2raysocks"
 	_ "github.com/wyx2685/XrayR/cmd/distro/all"
+	"github.com/wyx2685/XrayR/common/corecompat"
 	"github.com/wyx2685/XrayR/service"
 	"github.com/wyx2685/XrayR/service/controller"
 )
@@ -102,11 +104,17 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 			if err = json.Unmarshal(data, &coreCustomInboundConfig); err != nil {
 				log.Panicf("Failed to unmarshal Custom Inbound config: %s", panelConfig.InboundConfigPath)
 			}
+			if err = corecompat.ValidateTransportJSON(data); err != nil {
+				log.Panicf("Custom inbound compatibility: %s", err)
+			}
 		}
 	}
 	var inBoundConfig []*core.InboundHandlerConfig
 	for _, config := range coreCustomInboundConfig {
-		oc, err := config.Build()
+		if err := corecompat.NormalizeStream(config.StreamSetting); err != nil {
+			log.Panicf("invalid legacy transport config: %s", err)
+		}
+		oc, err := corecompat.BuildInbound(&config)
 		if err != nil {
 			log.Panicf("Failed to understand Inbound config, Please check: https://xtls.github.io/config/inbound.html for help: %s", err)
 		}
@@ -121,11 +129,17 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 			if err = json.Unmarshal(data, &coreCustomOutboundConfig); err != nil {
 				log.Panicf("Failed to unmarshal Custom Outbound config: %s", panelConfig.OutboundConfigPath)
 			}
+			if err = corecompat.ValidateTransportJSON(data); err != nil {
+				log.Panicf("Custom outbound compatibility: %s", err)
+			}
 		}
 	}
 	var outBoundConfig []*core.OutboundHandlerConfig
 	for _, config := range coreCustomOutboundConfig {
-		oc, err := config.Build()
+		if err := corecompat.NormalizeStream(config.StreamSetting); err != nil {
+			log.Panicf("invalid legacy transport config: %s", err)
+		}
+		oc, err := corecompat.BuildOutbound(&config)
 		if err != nil {
 			log.Panicf("Failed to understand Outbound config, Please check: https://xtls.github.io/config/outbound.html for help: %s", err)
 		}
@@ -154,6 +168,10 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 	server, err := core.New(config)
 	if err != nil {
 		log.Panicf("failed to create instance: %s", err)
+	}
+	if err := server.GetFeature(routing.DispatcherType()).(*mydispatcher.DefaultDispatcher).ConfigureDNS(dnsConfig); err != nil {
+		server.Close()
+		log.Panicf("failed to configure static hosts: %s", err)
 	}
 	log.Printf("Xray Core Version: %s", core.Version())
 
