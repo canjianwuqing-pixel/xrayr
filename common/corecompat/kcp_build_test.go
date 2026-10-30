@@ -1,6 +1,7 @@
 package corecompat
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -29,6 +30,42 @@ func builtKCP(t *testing.T, settings string) *kcp.Config {
 		t.Fatal(err)
 	}
 	return memory.ProtocolSettings.(*kcp.Config)
+}
+
+func TestLegacyKCPAllHeadersSeedAndMTU(t *testing.T) {
+	for _, header := range []string{"none", "srtp", "dtls", "utp", "wechat-video", "wireguard", "dns"} {
+		for _, seed := range []string{"", `,"seed":""`, `,"seed":"public-test-seed"`} {
+			for _, mtu := range []int{576, 1460} {
+				c := builtKCP(t, fmt.Sprintf(`{"mtu":%d,"header":{"type":%q,"domain":"example.invalid"}%s}`, mtu, header, seed))
+				h, err := c.GetPackerHeader()
+				if err != nil {
+					t.Fatal(err)
+				}
+				security, err := c.GetSecurity()
+				if err != nil {
+					t.Fatal(err)
+				}
+				var wire bytes.Buffer
+				writer := &kcp.KCPPacketWriter{Header: h, Security: security, Writer: &wire}
+				payload := bytes.Repeat([]byte("a"), mtu-writer.Overhead())
+				if _, err = writer.Write(payload); err != nil {
+					t.Fatal(err)
+				}
+				if wire.Len() != mtu {
+					t.Fatalf("%s seed=%q MTU %d -> wire %d", header, seed, mtu, wire.Len())
+				}
+				headerSize := 0
+				if h != nil {
+					headerSize = int(h.Size())
+				}
+				frame := wire.Bytes()[headerSize:]
+				decoded, err := security.Open(nil, frame[:security.NonceSize()], frame[security.NonceSize():], nil)
+				if err != nil || !bytes.Equal(decoded, payload) {
+					t.Fatalf("%s seed=%q frame changed: %v", header, seed, err)
+				}
+			}
+		}
+	}
 }
 func TestKCPRawTuningAndSeedStates(t *testing.T) {
 	for _, test := range []struct {
