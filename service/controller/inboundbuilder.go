@@ -16,11 +16,15 @@ import (
 	"github.com/xtls/xray-core/infra/conf"
 
 	"github.com/wyx2685/XrayR/api"
+	"github.com/wyx2685/XrayR/common/corecompat"
 	"github.com/wyx2685/XrayR/common/mylego"
 )
 
 // InboundBuilder build Inbound config for different protocol
 func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.InboundHandlerConfig, error) {
+	if config == nil || nodeInfo == nil {
+		return nil, fmt.Errorf("inbound config and node info are required")
+	}
 	inboundDetourConfig := &conf.InboundDetourConfig{}
 	// Build Listen IP address
 	if nodeInfo.NodeType == "Shadowsocks-Plugin" {
@@ -41,7 +45,7 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 	// SniffingConfig
 	sniffingConfig := &conf.SniffingConfig{
 		Enabled:      true,
-		DestOverride: &conf.StringList{"http", "tls", "quic", "fakedns"},
+		DestOverride: conf.StringList{"http", "tls", "quic", "fakedns"},
 	}
 	if config.DisableSniffing {
 		sniffingConfig.Enabled = false
@@ -99,19 +103,19 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 		protocol = "shadowsocks"
 		cipher := strings.ToLower(nodeInfo.CypherMethod)
 
-		proxySetting = &conf.ShadowsocksServerConfig{
+		proxySetting = &corecompat.LegacyShadowsocksServerConfig{
 			Cipher:   cipher,
 			Password: nodeInfo.ServerKey, // shadowsocks2022 shareKey
 		}
 
-		proxySetting, _ := proxySetting.(*conf.ShadowsocksServerConfig)
+		proxySetting, _ := proxySetting.(*corecompat.LegacyShadowsocksServerConfig)
 		// shadowsocks must have a random password
 		// shadowsocks2022's password == user PSK, thus should a length of string >= 32 and base64 encoder
 		b := make([]byte, 32)
 		rand.Read(b)
 		randPasswd := hex.EncodeToString(b)
 		if C.Contains(shadowaead_2022.List, cipher) {
-			proxySetting.Users = append(proxySetting.Users, &conf.ShadowsocksUserConfig{
+			proxySetting.Users = append(proxySetting.Users, &corecompat.LegacyShadowsocksUserConfig{
 				Password: base64.StdEncoding.EncodeToString(b),
 			})
 		} else {
@@ -195,14 +199,21 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 	// Build TLS and REALITY settings
 	var isREALITY bool
 	if config.DisableLocalREALITYConfig {
+		if nodeInfo.EnableREALITY && nodeInfo.REALITYConfig == nil {
+			return nil, fmt.Errorf("remote REALITY is enabled but its config is missing")
+		}
 		if nodeInfo.REALITYConfig != nil && nodeInfo.EnableREALITY {
 			isREALITY = true
 			streamSetting.Security = "reality"
 
 			r := nodeInfo.REALITYConfig
+			show := false
+			if config.REALITYConfigs != nil {
+				show = config.REALITYConfigs.Show
+			}
 			streamSetting.REALITYSettings = &conf.REALITYConfig{
-				Show:         config.REALITYConfigs.Show,
-				Dest:         []byte(`"` + r.Dest + `"`),
+				Show:         show,
+				Dest:         mustJSONDest(r.Dest),
 				Xver:         r.ProxyProtocolVer,
 				ServerNames:  r.ServerNames,
 				PrivateKey:   r.PrivateKey,
@@ -234,10 +245,16 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 			MinClientVer: config.REALITYConfigs.MinClientVer,
 			MaxClientVer: config.REALITYConfigs.MaxClientVer,
 			MaxTimeDiff:  config.REALITYConfigs.MaxTimeDiff,
-			ShortIds:     append(config.REALITYConfigs.ShortIds, nodeInfo.REALITYConfig.ShortIds...),
+			ShortIds:     mergeShortIDs(config.REALITYConfigs.ShortIds, nodeInfo.REALITYConfig),
 		}
 	}
 
+	if config.EnableREALITY && !config.DisableLocalREALITYConfig && config.REALITYConfigs == nil {
+		return nil, fmt.Errorf("local REALITY is enabled but its config is missing")
+	}
+	if !isREALITY && nodeInfo.EnableTLS && config.CertConfig == nil {
+		return nil, fmt.Errorf("TLS is enabled but certificate config is missing")
+	}
 	if !isREALITY && nodeInfo.EnableTLS && config.CertConfig.CertMode != "none" {
 		streamSetting.Security = "tls"
 		certFile, keyFile, err := getCertFile(config.CertConfig)
@@ -258,9 +275,12 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 		}
 		streamSetting.SocketSettings = sockoptConfig
 	}
+	if err := corecompat.NormalizeStream(streamSetting); err != nil {
+		return nil, err
+	}
 	inboundDetourConfig.StreamSetting = streamSetting
 
-	return inboundDetourConfig.Build()
+	return corecompat.BuildInbound(inboundDetourConfig)
 }
 
 func getCertFile(certConfig *mylego.CertConfig) (certFile string, keyFile string, err error) {
@@ -349,4 +369,18 @@ func buildTrojanFallbacks(fallbackConfigs []*FallBackConfig) ([]*conf.TrojanInbo
 		}
 	}
 	return trojanFallBacks, nil
+}
+
+// JSON marshaling preserves destinations containing quotes or escape characters.
+func mustJSONDest(dest string) json.RawMessage {
+	b, _ := json.Marshal(dest) // A string is always JSON encodable.
+	return b
+}
+
+func mergeShortIDs(local []string, remote *api.REALITYConfig) []string {
+	ids := append([]string(nil), local...)
+	if remote != nil {
+		ids = append(ids, remote.ShortIds...)
+	}
+	return ids
 }

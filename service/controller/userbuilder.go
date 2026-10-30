@@ -9,10 +9,10 @@ import (
 	C "github.com/sagernet/sing/common"
 	log "github.com/sirupsen/logrus"
 	"github.com/wyx2685/XrayR/api"
+	shadowsocks "github.com/wyx2685/XrayR/common/corecompat/legacyss"
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/infra/conf"
-	"github.com/xtls/xray-core/proxy/shadowsocks"
 	"github.com/xtls/xray-core/proxy/shadowsocks_2022"
 	"github.com/xtls/xray-core/proxy/trojan"
 	"github.com/xtls/xray-core/proxy/vless"
@@ -97,6 +97,7 @@ func (c *Controller) buildSSUser(userInfo *[]api.UserInfo, method string) (users
 				Email: c.buildUserTag(&user),
 				Account: serial.ToTypedMessage(&shadowsocks.Account{
 					Password:   user.Passwd,
+					IvCheck:    !c.config.DisableIVCheck,
 					CipherType: cipherFromString(method),
 				}),
 			}
@@ -133,6 +134,7 @@ func (c *Controller) buildSSPluginUser(userInfo *[]api.UserInfo) (users []*proto
 					Email: c.buildUserTag(&user),
 					Account: serial.ToTypedMessage(&shadowsocks.Account{
 						Password:   user.Passwd,
+						IvCheck:    !c.config.DisableIVCheck,
 						CipherType: cypherMethod,
 					}),
 				}

@@ -1,0 +1,37 @@
+Compatibility source provenance
+
+The legacyheader serializers, legacyss protocol implementation and legacyss2022
+outbound implementation originate from XTLS/Xray-core commit
+e80ca67feed9, Go module v1.8.25-0.20250101120305-e80ca67feed9, the exact core
+dependency of the imported XrayR baseline. They are retained under MPL-2.0.
+See LICENSE.xray-core in this directory. This does not replace the main core:
+the project core dependency remains pinned to commit
+5ca6f4b7d4dc20a881d4330e498892697627ec0c (26.7.28).
+
+Original paths:
+  proxy/shadowsocks/* -> legacyss/*
+  common/antireplay/{antireplay,bloomring}.go -> legacyss/antireplay/*
+  infra/conf/shadowsocks.go -> shadowsocks.go
+  proxy/shadowsocks_2022/{config.pb.go,config.proto,outbound.go,shadowsocks_2022.go}
+    -> legacyss2022/* (outbound compatibility only)
+  transport/internet/headers/{srtp,tls,utp,wechat,wireguard}/*
+    -> legacyheader/<name>/*
+
+Kuaiyun adaptations:
+  Local imports; distinct kuaiyun.compat protobuf namespaces and file names for
+  Shadowsocks/SS2022 to coexist with target-core descriptors; single-user
+  ServerEndpoint API; atomic round-robin server selection; explicit context
+  cancellation; finalmask adapter methods preserving original header state.
+  Legacy header descriptors retain their original names, which the target core
+  no longer defines. Original generated-file provenance comments are retained.
+
+config.proto files are sources for the adapted SS descriptors. To regenerate,
+use protoc with the original Xray-core source root as an import directory and
+protoc-gen-go matching google.golang.org/protobuf in go.mod. Generate using
+paths=source_relative from the repository root. Generated header descriptor
+names are deliberately retained to preserve their typed-message identities.
+
+Retaining these implementations adds maintenance obligations: do not assume
+upstream fixes to the new Shadowsocks implementation automatically fix the
+compatibility implementation. They require independent review and real-client
+tests before production release. No external-client test is claimed here.
