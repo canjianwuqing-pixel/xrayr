@@ -1,3 +1,5 @@
+//go:build external_integration
+
 package proxypanel_test
 
 import (

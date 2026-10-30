@@ -1,3 +1,5 @@
+//go:build external_integration
+
 package gov2panel_test
 
 import (

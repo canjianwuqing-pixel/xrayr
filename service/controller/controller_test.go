@@ -1,3 +1,5 @@
+//go:build external_integration
+
 package controller_test
 
 import (

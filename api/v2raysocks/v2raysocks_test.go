@@ -1,3 +1,5 @@
+//go:build external_integration
+
 package v2raysocks_test
 
 import (

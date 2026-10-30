@@ -1,3 +1,5 @@
+//go:build external_integration
+
 package newV2board_test
 
 import (
