@@ -20,12 +20,14 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/uot"
+	"github.com/wyx2685/XrayR/common/limiter"
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet/stat"
 	"github.com/xtls/xray-core/transport/pipe"
+	"golang.org/x/time/rate"
 )
 
 type testDialer struct {
@@ -154,7 +156,7 @@ func TestUoTAllVersionsEncryptedRoundTripAndWrappers(t *testing.T) {
 				upR, upW := pipe.New()
 				downR, downW := pipe.New()
 				cr := &countingReader{Reader: upR}
-				cw := &countingWriter{Writer: downW, delay: 20 * time.Millisecond}
+				cw := &countingWriter{Writer: downW}
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
 				ctx = processContext(ctx, net.Network_UDP)
@@ -165,8 +167,9 @@ func TestUoTAllVersionsEncryptedRoundTripAndWrappers(t *testing.T) {
 					ctx = session.ContextWithInbound(ctx, &session.Inbound{Conn: singPacketTrap{}})
 				}
 				done := make(chan error, 1)
+				rateWriter := limiter.New().RateWriterContext(ctx, cw, rate.NewLimiter(500, 1))
 				go func() {
-					done <- outbound.Process(ctx, &transport.Link{Reader: cr, Writer: cw}, testDialer{func(context.Context) (stat.Connection, error) { return client, nil }})
+					done <- outbound.Process(ctx, &transport.Link{Reader: cr, Writer: rateWriter}, testDialer{func(context.Context) (stat.Connection, error) { return client, nil }})
 				}()
 				payload := []byte("encrypted SS2022 UoT packet")
 				packet := buf.New()
@@ -183,7 +186,7 @@ func TestUoTAllVersionsEncryptedRoundTripAndWrappers(t *testing.T) {
 					t.Fatal("payload changed")
 				}
 				buf.ReleaseMulti(mb)
-				if cr.bytes.Load() != int64(len(payload)) || cw.bytes.Load() != int64(len(payload)) || time.Since(start) < cw.delay {
+				if cr.bytes.Load() != int64(len(payload)) || cw.bytes.Load() != int64(len(payload)) || time.Since(start) < 20*time.Millisecond {
 					t.Fatal("statistics/rate wrapper bypassed")
 				}
 				cancel()
@@ -391,12 +394,13 @@ func TestNativeUDPKeepsLinkWrappers(t *testing.T) {
 		upR, upW := pipe.New()
 		downR, downW := pipe.New()
 		cr := &countingReader{Reader: upR}
-		cw := &countingWriter{Writer: downW, delay: 10 * time.Millisecond}
+		cw := &countingWriter{Writer: downW}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		ctx = session.ContextWithInbound(processContext(ctx, net.Network_UDP), &session.Inbound{Conn: rawInbound})
 		done := make(chan error, 1)
+		rateWriter := limiter.New().RateWriterContext(ctx, cw, rate.NewLimiter(500, 1))
 		go func() {
-			done <- o.Process(ctx, &transport.Link{Reader: cr, Writer: cw}, testDialer{func(context.Context) (stat.Connection, error) { return client, nil }})
+			done <- o.Process(ctx, &transport.Link{Reader: cr, Writer: rateWriter}, testDialer{func(context.Context) (stat.Connection, error) { return client, nil }})
 		}()
 		payload := []byte("native UDP wrapped payload")
 		packet := buf.New()
