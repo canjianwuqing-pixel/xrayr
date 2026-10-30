@@ -72,6 +72,15 @@ func (s *Store) reserve(n int64) bool {
 type Filter struct {
 	store    *Store
 	identity [32]byte
+	base     [32]byte
+}
+
+// Namespace separates the local client and server roles without forgetting
+// server history across account rebuilds. Loopback relays can use the same key
+// on both roles without treating their own outbound packets as inbound replays.
+func (f *Filter) Namespace(name string) *Filter {
+	b := append(append([]byte(nil), f.base[:]...), []byte(name)...)
+	return &Filter{store: f.store, identity: sha256.Sum256(b), base: f.base}
 }
 
 // NewFilter allocates only a handle. Cipher and effective key identify the
@@ -85,6 +94,7 @@ func (s *Store) Filter(cipher uint32, key []byte) *Filter {
 	h.Write(key)
 	f := &Filter{store: s}
 	copy(f.identity[:], h.Sum(nil))
+	f.base = f.identity
 	return f
 }
 func (*Filter) Interval() int64         { return 9999999 }

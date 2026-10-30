@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/wyx2685/XrayR/common/corecompat/legacyss/antireplay"
 	"os"
 	"runtime"
 	"strconv"
@@ -36,7 +37,7 @@ func TestReplayDynamicRebuildAndPlain(t *testing.T) {
 	}
 	iv := make([]byte, 32)
 	rand.Read(iv)
-	if err = a.(*MemoryAccount).CheckIV(iv); err != nil {
+	if err = v.GetByEmail(u.Email).Account.(*MemoryAccount).CheckIV(iv); err != nil {
 		t.Fatal(err)
 	}
 	if err = v.Del(u.Email); err != nil {
@@ -46,12 +47,15 @@ func TestReplayDynamicRebuildAndPlain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = rebuilt.(*MemoryAccount).CheckIV(iv); err != ErrIVNotUnique {
-		t.Fatal("rebuild reset replay state", err)
-	}
 	u.Account = rebuilt
 	if err = v.Add(u); err != nil {
 		t.Fatal(err)
+	}
+	if err = v.GetByEmail(u.Email).Account.(*MemoryAccount).CheckIV(iv); err != ErrIVNotUnique {
+		t.Fatal("rebuild reset replay state", err)
+	}
+	if err = rebuilt.(*MemoryAccount).CheckIV(iv); err != nil {
+		t.Fatal("local client/server roles collided", err)
 	}
 	plain, _ := (&Account{CipherType: CipherType_NONE, Password: ephemeralPassword()}).AsAccount()
 	pv := new(Validator)
@@ -89,6 +93,8 @@ func TestReplayMemoryScale(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
+	registeredNs := int64(0)
+	budgetRejects := 0
 	record := func(phase string) {
 		runtime.GC()
 		var m runtime.MemStats
@@ -99,9 +105,11 @@ func TestReplayMemoryScale(t *testing.T) {
 		}
 		b, _ := json.Marshal(sample{n, phase, mi.RSS, m.HeapAlloc, m.HeapSys, m.Mallocs, m.TotalAlloc, m.NumGC, m.PauseTotalNs, time.Since(start).Nanoseconds()})
 		t.Log(string(b))
+		t.Logf("registration_ns=%d budget_rejects=%d", registeredNs, budgetRejects)
 	}
 	record("baseline")
 	accounts := make([]*MemoryAccount, n)
+	registrationStart := time.Now()
 	for i := range accounts {
 		a, err := (&Account{CipherType: CipherType_AES_128_GCM, Password: ephemeralPassword(), IvCheck: true}).AsAccount()
 		if err != nil {
@@ -109,6 +117,7 @@ func TestReplayMemoryScale(t *testing.T) {
 		}
 		accounts[i] = a.(*MemoryAccount)
 	}
+	registeredNs = time.Since(registrationStart).Nanoseconds()
 	record("registered_idle")
 	for i, a := range accounts {
 		for j := 0; j < 128; j++ {
@@ -121,5 +130,19 @@ func TestReplayMemoryScale(t *testing.T) {
 		}
 	}
 	record("128_IV_per_user")
+	for i, a := range accounts {
+		for j := 128; j < 512; j++ {
+			var iv [16]byte
+			binary.BigEndian.PutUint64(iv[:8], uint64(i))
+			binary.BigEndian.PutUint64(iv[8:], uint64(j))
+			err := a.CheckIV(iv[:])
+			if err == antireplay.ErrBudget {
+				budgetRejects++
+			} else if err != nil && err != ErrIVNotUnique {
+				t.Fatal(err)
+			}
+		}
+	}
+	record("512_IV_per_user_budget_enforced")
 	runtime.KeepAlive(accounts)
 }

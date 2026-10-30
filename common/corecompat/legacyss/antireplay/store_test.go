@@ -33,6 +33,10 @@ func TestLazyReplayLifecycleAndBudget(t *testing.T) {
 	if a.CheckError(iv) != ErrReplay {
 		t.Fatal("promotion lost exact history")
 	}
+	role := a.Namespace("server")
+	if role.CheckError(iv) != nil || role.Namespace("server").CheckError(iv) != ErrReplay {
+		t.Fatal("server namespace not idempotent")
+	}
 	tiny := NewStore(identityCharge + entryCharge)
 	f := tiny.Filter(1, []byte("key"))
 	if f.CheckError(iv) != nil || f.CheckError([]byte("new")) != ErrBudget {
