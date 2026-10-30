@@ -201,6 +201,9 @@ func (v *LegacyShadowsocksClientConfig) Build() (proto.Message, error) {
 			config.Method = server.Cipher
 			config.Key = server.Password
 			config.UdpOverTcp = server.UoT
+			if server.UoTVersion < 0 || server.UoTVersion > 2 {
+				return nil, errors.New("uotVersion must be 0, 1 or 2")
+			}
 			config.UdpOverTcpVersion = uint32(server.UoTVersion)
 			return config, nil
 		}

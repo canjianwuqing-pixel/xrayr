@@ -1,0 +1,19 @@
+SS2022 UoT 数据路径与资源所有权
+
+配置层和NewClient同时验证版本只能为0/1/2，不允许整数截断。
+0使用依赖规定的v2默认；1为legacy请求域名/帧；2为v2请求头。
+
+所有UDP出站，无论原始inbound.Conn实现什么接口，统一通过transport.Link的
+Reader/Writer；不直接复用原始PacketConn，保留dispatcher的统计与限速包装。
+新的适配器正确传播空缓冲上的EOF，保留包目的地址、已读取包和待处理错误。
+自有缓存只由读goroutine访问，CopyPacketConn等待两个任务结束后才释放剩余缓存。
+
+Dial成功即由Process负责defer Close；早期payload、首次写、握手失败均释放。
+上下文取消与空闲计时器关闭连接并中断上行Reader；下行Writer正常Close，避免
+Interrupt丢掉已交付的队列数据。退出停止计时器；复合拷贝错误不再因含EOF而全吞掉。
+沿用TimeoutOnly上下文约定，此模式仍只受独立空闲计时器控制，需在Linux验收单列。
+
+本地测试覆盖三版本真实加密编解码/双向payload、包装调用与延时、原始接口陷阱、
+读取EOF、首次写/握手失败、取消/超时、100次重连资源回收。
+Windows使用进程handle数；Linux另有/proc/self/fd计数测试。必须实际在Linux
+执行后才能填为Linux FD通过。长期压力、移动端客户端与真实节点验收仍未完成。
