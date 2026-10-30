@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package kuaiyun.compat.kcp;
 option csharp_namespace = "Xray.Transport.Internet.Kcp";
-option go_package = "github.com/wyx2685/XrayR/common/corecompat/legacykcp";
+option go_package = "github.com/wyx2685/XrayR/common/corecompat/legacykcp;kcp";
 option java_package = "com.xray.transport.internet.kcp";
 option java_multiple_files = true;
 
