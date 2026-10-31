@@ -1,0 +1,39 @@
+第四阶段D：独立边界复核与后续修复建议
+
+范围：静态复核，未修改下述实现或其测试；不与SS TCP预算P1修复混合。
+
+1. SS2022数据与EOF同时返回：确认错误分支会丢弃数据
+common/corecompat/legacyss2022/outbound.go:120—124的预取，非超时错误立即
+ReleaseMulti(mb)返回，mb非空且err=io.EOF时最后载荷未送入serverConn。
+既有payload-eof测试只返回nil+EOF；UDP“数据+EOF”单测不能覆盖TCP预取。
+独立方案：先消费已返回数据再处理终止错误；EOF需区分有数据/无数据、正常半关闭
+和握手首写失败，保留复合错误原因。新测试需真实加密TCP、有尾载荷EOF、零数据EOF、
+首写失败、对端回包和资源回收，避免修好尾包却重新引入握手/泄漏问题。
+
+2. 限速等待取消和超时：父context取消已支持，内部关闭边界尚未证明
+common/limiter/rate.go的WaitN使用创建Writer时的ctx，已有取消测试覆盖父ctx。
+SS2022 outbound.go:111—115的shutdown关闭网络/Link，空闲timer本身不取消该ctx。
+因此仅Close不能证明在低速WaitN长等待时立即退出；当前context timeout测试
+不等于300秒内部空闲timer触发。静态可见取消域不一致，尚未实测为确定泄漏。
+独立方案：定义“取消等待”与“保留正常EOF已排队数据”的不同终止语义，评估
+会话上下文传递或Writer专用取消等待接口；不可简单Interrupt丢掉正常下行缓存。
+测试需限制速率至长等待、触发EOF/内部超时/父取消分别验证时限、错误和字节、
+FD/goroutine，防止为快速退出而绕过限速。
+
+3. DNS伪装超长域名：确认存在静态越界路径
+legacyheader/dns/dns.go:37—44分配256字节并按off1切片；packDomainName:94—118
+允许最终off==256并返回257。4个各63字节label，单label检查通过，累积off为256，
+总域名过长且调用者可取buf[:257]。这是配置输入边界，不是任意远端UDP直接触发。
+独立方案：验证完整DNS wire name长度上限及终止零空间，打包函数返回错误，
+调用方再校验返回offset。测试空/root、63/64字节label、总长度边界、转义/Unicode/
+连续点和fuzz，不把长域名截断映射成另一个域名。本阶段不改该旧实现。
+
+4. none/plain混合用户顺序：确认Add检查不对称
+legacyss/validator.go:32—35只拒绝新用户为非AEAD且表非空；已有plain再新增AEAD
+会成功，Get:158—162又可先匹配plain。这是已有业务边界，非此次预算改动造成。
+常规clients数组不允许none，但动态Add路径仍需限制，不能仅靠配置解析兜底。
+独立方案：在同一个写锁内检查现有账户与新账户，拒绝任何AEAD/none混合和多个
+none；保留单个none/plain功能。覆盖两种新增顺序、删除/重加、并发更新、
+自定义配置及实际认证结果，防止用户归属或访问控制出现意外变化。
+
+这些问题应使用独立提交和验收任务处理。当前没有修复完成声明；不推送、不部署。
