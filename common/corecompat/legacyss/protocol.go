@@ -81,7 +81,7 @@ func ReadTCPSession(validator *Validator, reader io.Reader) (*protocol.RequestHe
 	case ErrIVNotUnique:
 		drainer.AcknowledgeReceive(int(buffer.Len()))
 		return nil, nil, drain.WithError(drainer, reader, errors.New("failed iv check").Base(err))
-	default:
+	case nil:
 		reader = &FullReader{reader, bs[ivLen:]}
 		drainer.AcknowledgeReceive(int(ivLen))
 
@@ -101,6 +101,11 @@ func ReadTCPSession(validator *Validator, reader io.Reader) (*protocol.RequestHe
 				return nil, nil, drain.WithError(drainer, reader, errors.New("failed to initialize decoding stream").Base(err).AtError())
 			}
 		}
+	default:
+		// Replay-store failures (including exhausted allocation budgets) must
+		// reject the request before address parsing or outbound dispatch.
+		drainer.AcknowledgeReceive(int(buffer.Len()))
+		return nil, nil, drain.WithError(drainer, reader, errors.New("failed authentication or IV check").Base(err))
 	}
 
 	br := &buf.BufferedReader{Reader: r}
