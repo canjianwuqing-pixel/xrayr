@@ -29,30 +29,21 @@ else
     echo -e "${red}未检测到系统版本，请联系脚本作者！${plain}\n" && exit 1
 fi
 
-arch=$(arch)
-# This release ships only XrayR-linux-64.zip; reject before touching installation paths.
-case "$arch" in
-    x86_64|x64|amd64) ;;
-    *) echo -e "${red}此快云发行版仅支持 Linux AMD64${plain}"; exit 1 ;;
-esac
+detect_arch() {
+    case "$1" in
+        x86_64|x64|amd64) echo "64" ;;
+        aarch64|arm64) echo "arm64-v8a" ;;
+        armv7l) echo "armv7" ;;
+        i386|i686) echo "386" ;;
+        riscv64) echo "riscv64" ;;
+        s390x) echo "s390x" ;;
+        *) echo "不支持的CPU架构: $1" >&2; return 1 ;;
+    esac
+}
 
-if [[ $arch == "x86_64" || $arch == "x64" || $arch == "amd64" ]]; then
-    arch="64"
-elif [[ $arch == "aarch64" || $arch == "arm64" ]]; then
-    arch="arm64-v8a"
-elif [[ $arch == "s390x" ]]; then
-    arch="s390x"
-else
-    arch="64"
-    echo -e "${red}检测架构失败，使用默认架构: ${arch}${plain}"
-fi
+arch=$(detect_arch "$(uname -m)") || exit 1
 
 echo "架构: ${arch}"
-
-if [ "$(getconf WORD_BIT)" != '32' ] && [ "$(getconf LONG_BIT)" != '64' ] ; then
-    echo "本软件不支持 32 位系统(x86)，请使用 64 位系统(x86_64)，如果检测有误，请联系作者"
-    exit 2
-fi
 
 os_version=""
 
@@ -81,10 +72,10 @@ fi
 install_base() {
     if [[ x"${release}" == x"centos" ]]; then
         yum install epel-release -y
-        yum install wget curl unzip tar crontabs socat -y
+        yum install wget curl unzip tar crontabs socat ca-certificates -y
     else
         apt update -y
-        apt install wget curl unzip tar cron socat -y
+        apt install wget curl unzip tar cron socat ca-certificates -y
     fi
 }
 
@@ -105,58 +96,57 @@ install_acme() {
     curl https://get.acme.sh | sh
 }
 
-install_XrayR() {
-    if [[ -e /usr/local/XrayR/ ]]; then
-        rm /usr/local/XrayR/ -rf
-    fi
+download_file() {
+    curl -fLsS --connect-timeout 15 --max-time 180 --retry 1 --retry-delay 1 -o "$2" "$1"
+}
 
-    mkdir /usr/local/XrayR/ -p
-	cd /usr/local/XrayR/
-
-    if  [ $# == 0 ] ;then
+prepare_download() {
+    if [ $# == 0 ]; then
         # 获取最新的 release
-        last_version=$(curl -Ls "https://api.github.com/repos/canjianwuqing-pixel/xrayr/releases" | grep '"tag_name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+        last_version=$(curl -fLsS --connect-timeout 15 --max-time 60 "https://api.github.com/repos/canjianwuqing-pixel/xrayr/releases" | grep '"tag_name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
         if [[ ! -n "$last_version" ]]; then
             echo -e "${red}检测 XrayR 版本失败，可能是超出 Github API 限制，请稍后再试，或手动指定 XrayR 版本安装${plain}"
-            echo -e "${yellow}提示：可以手动指定版本安装，例如：bash install.sh v0.9.4-ky.1${plain}"
-            exit 1
+            echo -e "${yellow}提示：可以手动指定版本安装，例如：bash install.sh v0.9.4-ky.3${plain}"
+            return 1
         fi
         echo -e "检测到 XrayR 最新版本：${last_version}，开始安装"
-        
-        # 尝试下载最新版本
-        wget -q -N --no-check-certificate -O /usr/local/XrayR/XrayR-linux.zip https://github.com/canjianwuqing-pixel/xrayr/releases/download/${last_version}/XrayR-linux-${arch}.zip
-        if [[ $? -ne 0 ]]; then
-            echo -e "${yellow}${last_version} 下载失败，尝试 v0.9.4-ky.1...${plain}"
-            # 如果最新版本下载失败，尝试 v0.9.4-ky.1
-            last_version="v0.9.4-ky.1"
-            wget -q -N --no-check-certificate -O /usr/local/XrayR/XrayR-linux.zip https://github.com/canjianwuqing-pixel/xrayr/releases/download/${last_version}/XrayR-linux-${arch}.zip
-            if [[ $? -ne 0 ]]; then
-                echo -e "${red}下载 XrayR 失败，请确保你的服务器能够下载 Github 的文件${plain}"
-                exit 1
-            fi
-        fi
     else
         if [[ $1 == v* ]]; then
             last_version=$1
 	else
 	    last_version="v"$1
 	fi
-        url="https://github.com/canjianwuqing-pixel/xrayr/releases/download/${last_version}/XrayR-linux-${arch}.zip"
-        echo -e "开始安装 XrayR ${last_version}"
-        wget -q -N --no-check-certificate -O /usr/local/XrayR/XrayR-linux.zip ${url}
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}下载 XrayR ${last_version} 失败，请确保此版本存在${plain}"
-            exit 1
-        fi
     fi
 
-    unzip XrayR-linux.zip
-    rm XrayR-linux.zip -f
+    asset="XrayR-linux-${arch}.zip"
+    download_dir=$(mktemp -d) || return 1
+    trap 'rm -rf -- "$download_dir"' EXIT
+    url="https://github.com/canjianwuqing-pixel/xrayr/releases/download/${last_version}/${asset}"
+    echo -e "下载并校验 XrayR ${last_version} (${arch})"
+    download_file "$url" "$download_dir/$asset" || return 1
+    download_file "$url.sha256" "$download_dir/$asset.sha256" || return 1
+    (cd "$download_dir" && sha256sum -c "$asset.sha256") || return 1
+    unzip -tq "$download_dir/$asset" || return 1
+    for required in XrayR config.yml dns.json route.json custom_inbound.json custom_outbound.json rulelist geoip.dat geosite.dat; do
+        unzip -Z1 "$download_dir/$asset" | grep -Fxq "$required" || return 1
+    done
+    download_file "https://raw.githubusercontent.com/canjianwuqing-pixel/xrayr/${last_version}/XrayR.service" "$download_dir/XrayR.service" || return 1
+    download_file "https://raw.githubusercontent.com/canjianwuqing-pixel/xrayr/${last_version}/XrayR.sh" "$download_dir/XrayR.sh" || return 1
+    [[ -s "$download_dir/XrayR.service" && -s "$download_dir/XrayR.sh" ]] || return 1
+}
+
+install_XrayR() {
+    if [[ -e /usr/local/XrayR/ ]]; then
+        rm /usr/local/XrayR/ -rf
+    fi
+
+    mkdir /usr/local/XrayR/ -p
+    cd /usr/local/XrayR/ || exit 1
+    unzip "$download_dir/$asset" || exit 1
     chmod +x XrayR
     mkdir /etc/XrayR/ -p
     rm /etc/systemd/system/XrayR.service -f
-    file="https://raw.githubusercontent.com/canjianwuqing-pixel/xrayr/feature/xray-core-26.7.28/XrayR.service"
-    wget -q -N --no-check-certificate -O /etc/systemd/system/XrayR.service ${file}
+    cp "$download_dir/XrayR.service" /etc/systemd/system/XrayR.service
     systemctl daemon-reload
     systemctl stop XrayR
     systemctl unmask XrayR 2>/dev/null || true
@@ -196,7 +186,7 @@ install_XrayR() {
     if [[ ! -f /etc/XrayR/rulelist ]]; then
         cp rulelist /etc/XrayR/
     fi
-    curl -o /usr/bin/XrayR -Ls https://raw.githubusercontent.com/canjianwuqing-pixel/xrayr/feature/xray-core-26.7.28/XrayR.sh
+    cp "$download_dir/XrayR.sh" /usr/bin/XrayR
     chmod +x /usr/bin/XrayR
     ln -s /usr/bin/XrayR /usr/bin/xrayr # 小写兼容
     chmod +x /usr/bin/xrayr
@@ -223,6 +213,7 @@ install_XrayR() {
 }
 
 echo -e "${green}开始安装${plain}"
-install_base
+install_base || exit 1
 # install_acme
-install_XrayR $1
+prepare_download "$@" || { echo -e "${red}下载或校验失败，未修改XrayR安装目录${plain}"; exit 1; }
+install_XrayR
