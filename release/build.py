@@ -96,9 +96,9 @@ def main():
         if z.testzip() is not None or set(z.namelist()) != set(payload):
             raise SystemExit("ZIP integrity/layout failure")
     sha = digest(archive.read_bytes())
-    (output / (ASSET + ".sha256")).write_text(sha + "  " + ASSET + "\n", encoding="ascii")
+    (output / (ASSET + ".sha256")).write_text(sha + "  " + ASSET + "\n", encoding="ascii", newline="\n")
     (output / "BUILD-INFO.json").write_bytes(payload["BUILD-INFO.json"])
-    (output / "binary-build-info.txt").write_text(build_info, encoding="utf-8")
+    (output / "binary-build-info.txt").write_text(build_info, encoding="utf-8", newline="\n")
     print(json.dumps({"source_commit": commit, "zip": str(archive), "sha256": sha, "size": archive.stat().st_size}, ensure_ascii=False))
 
 
