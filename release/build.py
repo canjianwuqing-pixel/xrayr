@@ -77,7 +77,7 @@ def main():
     if payload["XrayR"][:5] != b"\x7fELF\x02" or int.from_bytes(payload["XrayR"][18:20], "little") != 62:
         raise SystemExit("Not an ELF64 x86-64 executable")
     info = {
-        "release_tag_proposal": "v0.9.4-ky.1", "xrayr_version": "0.9.4",
+        "release_tag_proposal": "v0.9.4-ky.2", "xrayr_version": "0.9.4",
         "xray_core_version": "26.7.28", "xray_core_module": CORE,
         "xray_core_commit": CORE_COMMIT, "source_commit": commit,
         "go_version": "1.26.5", "goos": "linux", "goarch": "amd64", "cgo_enabled": 0,
