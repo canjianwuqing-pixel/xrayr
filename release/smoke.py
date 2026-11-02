@@ -175,6 +175,14 @@ def main():
                     while True:
                         if process.poll() is not None:
                             raise RuntimeError("Server exited during startup")
+                        # A listening socket precedes dynamic user/limiter setup.
+                        # Wait for the controller to finish before authenticating.
+                        startup = (root / "server.log").read_text(encoding="utf-8", errors="replace")
+                        if "Start user monitor periodic task" not in startup:
+                            if time.monotonic() >= deadline:
+                                raise RuntimeError("Controller did not finish user initialization")
+                            time.sleep(0.1)
+                            continue
                         try:
                             ready = socket.create_connection(("127.0.0.1", inbound_port), timeout=1)
                             ready.close()
