@@ -3,7 +3,6 @@ package shadowsocks
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -12,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wyx2685/XrayR/common/corecompat/legacyss/antireplay"
 	"github.com/xtls/xray-core/common/buf"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/protocol"
@@ -22,45 +20,31 @@ import (
 	"github.com/xtls/xray-core/transport"
 )
 
-// These fixtures pin the current accounting model without changing the global
-// store, disabling server IV checks, or adding production injection interfaces.
-const (
-	replayIdentityBytes = 4096
-	replayEntryBytes    = 128
-	replayBloomBytes    = 359439 + 1024
-)
-
+// Exercise real authentication and account-local replay checking before dispatch.
 var replayPayload = bytes.Repeat([]byte("authenticated uplink payload;"), 8)
 
 type replayScenario struct {
-	name                              string
-	budget                            int64
-	preload                           int
-	duplicate, unknown, fillRemaining bool
-	want                              error
+	name                            string
+	duplicate, unknown, withHistory bool
+	want                            error
 }
 
 var replayScenarios = []replayScenario{
-	{name: "authorized", budget: 2 << 20},
-	{name: "duplicate_iv", budget: 2 << 20, duplicate: true, want: ErrIVNotUnique},
-	{name: "unknown_credential", budget: 2 << 20, unknown: true, want: ErrNotFound},
-	{name: "identity_budget", budget: replayIdentityBytes - 1, want: antireplay.ErrBudget},
-	{name: "exact_entry_budget", budget: replayIdentityBytes + replayEntryBytes, preload: 1, want: antireplay.ErrBudget},
-	{name: "bloom_promotion_budget", budget: replayIdentityBytes + 256*replayEntryBytes, preload: 256, want: antireplay.ErrBudget},
-	{name: "existing_bloom_at_full_budget", budget: replayIdentityBytes + 256*replayEntryBytes + replayBloomBytes, preload: 257, fillRemaining: true},
+	{name: "authorized"},
+	{name: "duplicate_iv", duplicate: true, want: ErrIVNotUnique},
+	{name: "unknown_credential", unknown: true, want: ErrNotFound},
+	{name: "existing_history", withHistory: true},
 }
 
-func replayFixture(t *testing.T, scenario replayScenario, udp bool) (*Validator, *antireplay.Store, []byte, *protocol.MemoryUser) {
+func replayFixture(t *testing.T, scenario replayScenario, udp bool) (*Validator, []byte, *protocol.MemoryUser) {
 	t.Helper()
 	account, err := (&Account{Password: ephemeralPassword(), CipherType: CipherType_AES_128_GCM, IvCheck: true}).AsAccount()
 	if err != nil {
 		t.Fatal(err)
 	}
 	serverAccount := account.(*MemoryAccount)
-	store := antireplay.NewStore(scenario.budget)
-	serverAccount.replayFilter = store.Filter(uint32(serverAccount.CipherType), serverAccount.Key)
 	validator := new(Validator)
-	user := &protocol.MemoryUser{Email: "budget-regression@example.invalid", Account: serverAccount}
+	user := &protocol.MemoryUser{Email: "compat-regression@example.invalid", Account: serverAccount}
 	if err = validator.Add(user); err != nil {
 		t.Fatal(err)
 	}
@@ -97,13 +81,12 @@ func replayFixture(t *testing.T, scenario replayScenario, udp bool) (*Validator,
 		}
 		wire = bytes.Clone(encoded.Bytes())
 	}
-	for i := 0; i < scenario.preload; i++ {
-		var salt [16]byte
-		binary.BigEndian.PutUint64(salt[8:], uint64(i+1))
-		if bytes.Equal(salt[:], wire[:16]) {
+	if scenario.withHistory {
+		salt := bytes.Repeat([]byte{0xa5}, 16)
+		if bytes.Equal(salt, wire[:16]) {
 			t.Fatal("fixture salt collision")
 		}
-		if err = serverAccount.CheckIV(salt[:]); err != nil {
+		if err = serverAccount.CheckIV(salt); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -112,29 +95,13 @@ func replayFixture(t *testing.T, scenario replayScenario, udp bool) (*Validator,
 			t.Fatal(err)
 		}
 	}
-	if scenario.fillRemaining {
-		// Promotion refunds the exact set. Occupy that refund with a separate
-		// credential so the main credential must succeed with zero free budget.
-		other := store.Filter(uint32(CipherType_AES_128_GCM), []byte("isolated filler credential"))
-		for i := 0; i < 224; i++ {
-			var salt [16]byte
-			binary.BigEndian.PutUint64(salt[8:], uint64(i))
-			if err = other.CheckError(salt[:]); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if store.Used() != scenario.budget {
-			t.Fatalf("not at full budget: %d != %d", store.Used(), scenario.budget)
-		}
-	}
-	return validator, store, wire, client
+	return validator, wire, client
 }
 
-func TestReadTCPSessionReplayBudgetErrors(t *testing.T) {
+func TestReadTCPSessionAuthentication(t *testing.T) {
 	for _, scenario := range replayScenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			v, store, wire, _ := replayFixture(t, scenario, false)
-			before := store.Used()
+			v, wire, _ := replayFixture(t, scenario, false)
 			attempts := 1
 			if scenario.want != nil {
 				attempts = 3
@@ -145,15 +112,12 @@ func TestReadTCPSessionReplayBudgetErrors(t *testing.T) {
 					if !errors.Is(err, scenario.want) || request != nil || reader != nil {
 						t.Fatalf("attempt %d: error=%v, request=%v, reader=%T; want %v and no request", attempt, err, request, reader, scenario.want)
 					}
-					if store.Used() != before {
-						t.Fatal("rejected request allocated or released replay history")
-					}
 					continue
 				}
 				if err != nil {
 					t.Fatal(err)
 				}
-				if request.Address.String() != "127.0.0.1" || request.Port != 12345 || request.User.Email != "budget-regression@example.invalid" {
+				if request.Address.String() != "127.0.0.1" || request.Port != 12345 || request.User.Email != "compat-regression@example.invalid" {
 					t.Fatal("decoded request mismatch")
 				}
 				var body bytes.Buffer
@@ -162,9 +126,6 @@ func TestReadTCPSessionReplayBudgetErrors(t *testing.T) {
 				}
 				if !bytes.Equal(body.Bytes(), replayPayload) {
 					t.Fatal("authorized payload changed")
-				}
-				if scenario.fillRemaining && store.Used() != before {
-					t.Fatal("existing Bloom required another allocation")
 				}
 			}
 		})
@@ -321,12 +282,11 @@ func runReplayTCPProcess(t *testing.T, v *Validator, wire []byte, clientUser *pr
 	}
 }
 
-func TestServerTCPReplayBudgetStopsDispatch(t *testing.T) {
+func TestServerTCPAuthenticationStopsDispatch(t *testing.T) {
 	for _, scenario := range replayScenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			v, store, wire, user := replayFixture(t, scenario, false)
+			v, wire, user := replayFixture(t, scenario, false)
 			d := newReplayDispatcher(t)
-			before := store.Used()
 			attempts := 1
 			if scenario.want != nil {
 				attempts = 3
@@ -340,18 +300,12 @@ func TestServerTCPReplayBudgetStopsDispatch(t *testing.T) {
 					if d.dispatches.Load() != 0 || d.dials.Load() != 0 || d.forwarded.Load() != 0 {
 						t.Fatalf("rejection reached outbound: dispatch=%d dial=%d uplink=%d", d.dispatches.Load(), d.dials.Load(), d.forwarded.Load())
 					}
-					if store.Used() != before {
-						t.Fatal("rejected retry changed history accounting")
-					}
 				} else {
 					if err != nil {
 						t.Fatal(err)
 					}
 					if d.dispatches.Load() != 1 || d.dials.Load() != 1 || d.forwarded.Load() != int64(len(replayPayload)) {
 						t.Fatal("authorized request never traversed real outbound fixture")
-					}
-					if scenario.fillRemaining && store.Used() != before {
-						t.Fatal("mature history allocated at full budget")
 					}
 				}
 			}
@@ -360,11 +314,10 @@ func TestServerTCPReplayBudgetStopsDispatch(t *testing.T) {
 	}
 }
 
-func TestUDPReplayBudgetErrorPropagation(t *testing.T) {
+func TestUDPAuthenticationPropagation(t *testing.T) {
 	for _, scenario := range replayScenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			v, store, wire, _ := replayFixture(t, scenario, true)
-			before := store.Used()
+			v, wire, _ := replayFixture(t, scenario, true)
 			packet := buf.New()
 			packet.Write(wire)
 			defer packet.Release()
@@ -405,8 +358,8 @@ func TestUDPReplayBudgetErrorPropagation(t *testing.T) {
 					t.Fatal(err)
 				} // UDP invalid packets are dropped, not returned as session errors.
 			}
-			if d.dispatches.Load() != 0 || d.dials.Load() != 0 || d.forwarded.Load() != 0 || store.Used() != before {
-				t.Fatal("UDP rejected packet reached outbound or changed history")
+			if d.dispatches.Load() != 0 || d.dials.Load() != 0 || d.forwarded.Load() != 0 {
+				t.Fatal("UDP rejected packet reached outbound")
 			}
 			t.Logf("attempts=3 dispatch=%d dial=%d uplink_bytes=%d (controlled packet reader)", d.dispatches.Load(), d.dials.Load(), d.forwarded.Load())
 		})

@@ -2,17 +2,9 @@ package shadowsocks
 
 import (
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
-	"github.com/wyx2685/XrayR/common/corecompat/legacyss/antireplay"
-	"os"
-	"runtime"
-	"strconv"
 	"testing"
-	"time"
 
-	"github.com/shirou/gopsutil/v3/process"
 	"github.com/xtls/xray-core/common/protocol"
 )
 
@@ -23,9 +15,9 @@ func ephemeralPassword() string {
 	}
 	return hex.EncodeToString(b[:])
 }
-func TestReplayDynamicRebuildAndPlain(t *testing.T) {
-	p := ephemeralPassword()
-	raw := &Account{CipherType: CipherType_XCHACHA20_POLY1305, Password: p, IvCheck: true}
+
+func TestLegacyReplayAccountLifecycle(t *testing.T) {
+	raw := &Account{CipherType: CipherType_XCHACHA20_POLY1305, Password: ephemeralPassword(), IvCheck: true}
 	a, err := raw.AsAccount()
 	if err != nil {
 		t.Fatal(err)
@@ -36,113 +28,54 @@ func TestReplayDynamicRebuildAndPlain(t *testing.T) {
 		t.Fatal(err)
 	}
 	iv := make([]byte, 32)
-	rand.Read(iv)
-	if err = v.GetByEmail(u.Email).Account.(*MemoryAccount).CheckIV(iv); err != nil {
+	if _, err = rand.Read(iv); err != nil {
 		t.Fatal(err)
+	}
+	if err = a.(*MemoryAccount).CheckIV(iv); err != nil {
+		t.Fatal(err)
+	}
+	if err = a.(*MemoryAccount).CheckIV(iv); err != ErrIVNotUnique {
+		t.Fatal("replay accepted", err)
 	}
 	if err = v.Del(u.Email); err != nil {
 		t.Fatal(err)
 	}
-	rebuilt, err := raw.AsAccount()
-	if err != nil {
-		t.Fatal(err)
-	}
-	u.Account = rebuilt
 	if err = v.Add(u); err != nil {
 		t.Fatal(err)
 	}
 	if err = v.GetByEmail(u.Email).Account.(*MemoryAccount).CheckIV(iv); err != ErrIVNotUnique {
-		t.Fatal("rebuild reset replay state", err)
+		t.Fatal("same account forgot history", err)
 	}
-	if err = rebuilt.(*MemoryAccount).CheckIV(iv); err != nil {
-		t.Fatal("local client/server roles collided", err)
-	}
-	plain, _ := (&Account{CipherType: CipherType_NONE, Password: ephemeralPassword()}).AsAccount()
-	pv := new(Validator)
-	if pv.Add(&protocol.MemoryUser{Account: plain}) != nil {
-		t.Fatal("plain single user removed")
-	}
-	if pv.Add(&protocol.MemoryUser{Account: plain}) == nil {
-		t.Fatal("plain multiuser restriction changed")
-	}
-}
-
-// Run each size in a fresh test process; excluded from routine/race workloads.
-func TestReplayMemoryScale(t *testing.T) {
-	n, err := strconv.Atoi(os.Getenv("KUAIYUN_MEMORY_USERS"))
-	if err != nil {
-		t.Skip("set KUAIYUN_MEMORY_USERS for isolated memory measurement")
-	}
-	if n < 1 || n > 2000 {
-		t.Fatal("invalid measurement size")
-	}
-	type sample struct {
-		Users        int
-		Phase        string
-		RSS          uint64
-		HeapAlloc    uint64
-		HeapSys      uint64
-		Mallocs      uint64
-		TotalAlloc   uint64
-		NumGC        uint32
-		PauseTotalNs uint64
-		ElapsedNs    int64
-	}
-	p, err := process.NewProcess(int32(os.Getpid()))
+	// Preserve the original account-local scope. Rebuilding a distinct account is
+	// not a claim of cross-rebuild, cross-node or persistent replay history.
+	rebuilt, err := raw.AsAccount()
 	if err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
-	registeredNs := int64(0)
-	budgetRejects := 0
-	record := func(phase string) {
-		runtime.GC()
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
-		mi, err := p.MemoryInfo()
-		if err != nil {
+	if err = rebuilt.(*MemoryAccount).CheckIV(iv); err != nil {
+		t.Fatal("accounts unexpectedly share history", err)
+	}
+}
+
+func TestLegacyPlainHasNoSalt(t *testing.T) {
+	a, err := (&Account{CipherType: CipherType_NONE, Password: ephemeralPassword(), IvCheck: true}).AsAccount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := a.(*MemoryAccount)
+	for range 3 {
+		if err = account.CheckIV(nil); err != nil {
 			t.Fatal(err)
 		}
-		b, _ := json.Marshal(sample{n, phase, mi.RSS, m.HeapAlloc, m.HeapSys, m.Mallocs, m.TotalAlloc, m.NumGC, m.PauseTotalNs, time.Since(start).Nanoseconds()})
-		t.Log(string(b))
-		t.Logf("registration_ns=%d budget_rejects=%d", registeredNs, budgetRejects)
 	}
-	record("baseline")
-	accounts := make([]*MemoryAccount, n)
-	registrationStart := time.Now()
-	for i := range accounts {
-		a, err := (&Account{CipherType: CipherType_AES_128_GCM, Password: ephemeralPassword(), IvCheck: true}).AsAccount()
-		if err != nil {
-			t.Fatal(err)
-		}
-		accounts[i] = a.(*MemoryAccount)
+	if account.replayFilter != nil {
+		t.Fatal("zero-IV cipher allocated a filter")
 	}
-	registeredNs = time.Since(registrationStart).Nanoseconds()
-	record("registered_idle")
-	for i, a := range accounts {
-		for j := 0; j < 128; j++ {
-			var iv [16]byte
-			binary.BigEndian.PutUint64(iv[:8], uint64(i))
-			binary.BigEndian.PutUint64(iv[8:], uint64(j))
-			if err := a.CheckIV(iv[:]); err != nil {
-				t.Fatal(err)
-			}
-		}
+	v := new(Validator)
+	if err = v.Add(&protocol.MemoryUser{Account: a}); err != nil {
+		t.Fatal(err)
 	}
-	record("128_IV_per_user")
-	for i, a := range accounts {
-		for j := 128; j < 512; j++ {
-			var iv [16]byte
-			binary.BigEndian.PutUint64(iv[:8], uint64(i))
-			binary.BigEndian.PutUint64(iv[8:], uint64(j))
-			err := a.CheckIV(iv[:])
-			if err == antireplay.ErrBudget {
-				budgetRejects++
-			} else if err != nil && err != ErrIVNotUnique {
-				t.Fatal(err)
-			}
-		}
+	if err = v.Add(&protocol.MemoryUser{Account: a}); err == nil {
+		t.Fatal("plain multi-user restriction removed")
 	}
-	record("512_IV_per_user_budget_enforced")
-	runtime.KeepAlive(accounts)
 }

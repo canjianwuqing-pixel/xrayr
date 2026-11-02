@@ -33,16 +33,7 @@ func (v *Validator) Add(u *protocol.MemoryUser) error {
 	if !account.Cipher.IsAEAD() && len(v.users) > 0 {
 		return errors.New("The cipher is not support Single-port Multi-user")
 	}
-	// Publish an immutable server-role copy. Do not mutate a caller's account
-	// while another connection might already be checking its IVs.
-	if account.replayFilter != nil {
-		copyUser, copyAccount := *u, *account
-		copyAccount.replayFilter = account.replayFilter.Namespace("server")
-		copyUser.Account = &copyAccount
-		v.users = append(v.users, &copyUser)
-	} else {
-		v.users = append(v.users, u)
-	}
+	v.users = append(v.users, u)
 
 	if !v.behaviorFused {
 		hashkdf := hmac.New(sha256.New, []byte("SSBSKDF"))

@@ -102,8 +102,8 @@ func ReadTCPSession(validator *Validator, reader io.Reader) (*protocol.RequestHe
 			}
 		}
 	default:
-		// Replay-store failures (including exhausted allocation budgets) must
-		// reject the request before address parsing or outbound dispatch.
+		// Reject every non-nil authentication failure before address parsing
+		// or outbound dispatch, including errors added by future adapters.
 		drainer.AcknowledgeReceive(int(buffer.Len()))
 		return nil, nil, drain.WithError(drainer, reader, errors.New("failed authentication or IV check").Base(err))
 	}

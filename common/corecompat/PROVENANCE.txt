@@ -53,7 +53,8 @@ Stage 4B additions and modifications:
   transport/internet/headers/dns/* -> legacyheader/dns/*, same original source.
   Its original descriptor identity is retained (absent from target-core).
   Stateful SRTP/DTLS/Wechat serialization is synchronized inside Serialize only.
-  SS replay state uses a bounded lazy store; SS2022 uses managed Link-based IO.
+  SS replay state uses the original account-local BloomRing; SS2022 uses managed Link-based IO.
+  The earlier bounded global-store experiment is not part of the minimal release.
   See docs/stage4b-* for explicit design, limits and test evidence.
 
 For legacykcp regeneration, invoke protoc from the repository root with both
