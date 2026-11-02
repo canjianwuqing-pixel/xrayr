@@ -160,11 +160,6 @@ func TestDispatchLinkVisionAccountingAndRateWriter(t *testing.T) {
 	if err = d.Limiter.AddInboundLimiter("test", 0, &users, nil); err != nil {
 		t.Fatal(err)
 	}
-	// Consume the initial burst so writes must actually wait.
-	bucket, ok, reject := d.Limiter.GetUserBucket("test", user.Email, "127.0.0.1", true)
-	if !ok || reject || !bucket.AllowN(time.Now(), 1000) {
-		t.Fatal("limiter setup")
-	}
 	var dnsCfg conf.DNSConfig
 	if err = json.Unmarshal([]byte(`{"hosts":{"full:echo.example.invalid":"192.0.2.25"}}`), &dnsCfg); err != nil {
 		t.Fatal(err)
@@ -178,6 +173,12 @@ func TestDispatchLinkVisionAccountingAndRateWriter(t *testing.T) {
 	}
 	payload := bytes.Repeat([]byte("x"), 30)
 	var output bytes.Buffer
+	// Drain immediately before the timed writes. DNS setup above can take
+	// long enough to refill the bucket on native Linux runners.
+	bucket, ok, reject := d.Limiter.GetUserBucket("test", user.Email, "127.0.0.1", true)
+	if !ok || reject || !bucket.AllowN(time.Now(), bucket.Burst()) {
+		t.Fatal("limiter setup")
+	}
 	start := time.Now()
 	err = d.DispatchLink(ctx, net.TCPDestination(net.ParseAddress("echo.example.invalid"), 443), &transport.Link{Reader: buf.NewReader(bytes.NewReader(payload)), Writer: buf.NewWriter(&output)})
 	if err != nil {
