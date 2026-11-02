@@ -10,6 +10,8 @@ env:
 
 jobs:
   build:
+    # The first Kuaiyun release publishes only the AMD64 ZIP; Docker stays manual.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

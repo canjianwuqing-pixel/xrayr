@@ -6,10 +6,23 @@
 - 固定源码提交：`0bb4713626128849da0d2437defea1a1322c44cc`
 - 目标仓库：https://github.com/canjianwuqing-pixel/xrayr
 - 开发分支：`feature/xray-core-26.7.28`
-- 当前阶段：已完成 Xray-core 26.7.28 依赖与 API 适配，以及本地测试、vet 和 Linux AMD64 编译；真实客户端与生产验收尚未完成。
-- 核心固定模块：`github.com/xtls/xray-core v1.260327.1-0.20260728075948-5ca6f4b7d4dc`，要求 Go 1.26。
-- 兼容性范围、外部测试隔离和已知缺口：[第三阶段开发说明](docs/CORE_UPGRADE_STAGE3.txt)。旧 mKCP 部分调优字段尚未兼容，不可据此宣称全量旧配置可用。
+- 发行目标：XrayR 程序版本保持 **0.9.4**，仅升级内嵌核心至 **26.7.28**，保留原配置格式和管理方式。
+- 核心固定模块：`github.com/xtls/xray-core v1.260327.1-0.20260728075948-5ca6f4b7d4dc`，编译固定 Go **1.26.5**、Linux AMD64。
+- 当前兼容边界、最小改动与预发布方案：[发行说明](docs/RELEASE_KY1.txt)。真实客户端与生产验收尚未完成，历史阶段报告不代表当前行为。
 - 原有 MPL-2.0 LICENSE 及上游说明完整保留。
+
+## 快云安装与构建
+
+仅在批准的 `v0.9.4-ky.1` Release 资产已发布后使用：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/canjianwuqing-pixel/xrayr/feature/xray-core-26.7.28/install.sh) v0.9.4-ky.1
+```
+
+Release 尚未发布时，这不是可用的下载命令。保留原安装流程，未对生产节点执行。
+`XrayR update`、菜单和 service 用法不变；安装和脚本更新均从快云仓库获取。
+使用 Go 1.26.5 执行 `python3 release/build.py`，生成原安装器需要的 `XrayR-linux-64.zip` 和 SHA256。
+分支工作流仅上传测试 artifact，不自动创建或公开稳定版 Release。
 
 ## 上游历史归档
 
@@ -36,6 +49,8 @@
 ---
 
 ## 完整上游项目说明
+
+以下保留原作者说明及历史链接；快云发行版请使用上方快云安装入口。
 
 ## 本分支需要配合修改过的V2board面板进行使用
 https://github.com/wyx2685/v2board
