@@ -1,9 +1,9 @@
-name: Build Kuaiyun XrayR Linux AMD64
+name: Build Kuaiyun XrayR Linux architectures
 
 on:
   workflow_dispatch:
   push:
-    branches: [feature/xray-core-26.7.28]
+    branches: [feature/xray-core-26.7.28, feature/linux-multiarch-ky3]
   pull_request:
   release:
     types: [published]
@@ -13,7 +13,22 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Linux ${{ matrix.arch }} (${{ matrix.mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: amd64, suffix: '64', runner: ubuntu-24.04, mode: native, emulator: ''}
+          - {arch: arm64, suffix: arm64-v8a, runner: ubuntu-24.04-arm, mode: native, emulator: ''}
+          - {arch: armv7, suffix: armv7, runner: ubuntu-24.04, mode: emulated, emulator: qemu-arm}
+          - {arch: '386', suffix: '386', runner: ubuntu-24.04, mode: compat32, emulator: ''}
+          - {arch: riscv64, suffix: riscv64, runner: ubuntu-24.04, mode: emulated, emulator: qemu-riscv64}
+          - {arch: s390x, suffix: s390x, runner: ubuntu-24.04, mode: emulated, emulator: qemu-s390x}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    env:
+      CGO_ENABLED: '0'
+      GOTOOLCHAIN: local
     steps:
       - name: Checkout the triggering commit
         uses: actions/checkout@v4
@@ -24,41 +39,55 @@ jobs:
         with:
           go-version: '1.26.5'
           check-latest: false
-      - name: Test and verify fixed dependencies
-        env:
-          CGO_ENABLED: '0'
-          GOTOOLCHAIN: local
+      - name: Native Go tests and vet
+        if: matrix.mode == 'native'
         run: |
           go test -count=1 -timeout=10m ./...
           go vet ./...
+      - name: Verify dependencies and installer gates
+        run: |
           go mod verify
           bash -n install.sh
           bash -n XrayR.sh
-      - name: Build the original installer ZIP layout
-        run: python3 release/build.py --output out/release
-      - name: Upload test build artifacts
+          python3 -B -m unittest discover -s release -p 'test_*.py' -v
+      - name: Build and inspect the platform ZIP
+        run: python3 -B release/build.py --arch '${{ matrix.arch }}' --output out/release
+      - name: Set up user mode emulator for additional architectures
+        if: matrix.mode == 'emulated'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-user
+      - name: Run packaged server and real loopback VLESS traffic
+        env:
+          PLATFORM: ${{ matrix.arch }}
+          SUFFIX: ${{ matrix.suffix }}
+          MODE: ${{ matrix.mode }}
+          EMULATOR: ${{ matrix.emulator }}
+        run: |
+          args=()
+          if [ -n "$EMULATOR" ]; then args+=(--emulator "$EMULATOR"); fi
+          python3 -B release/smoke.py --package "out/release/XrayR-linux-$SUFFIX.zip" --arch "$PLATFORM" --mode "$MODE" "${args[@]}" --output out/release/runtime
+          cp out/release/runtime/runtime-result.json "out/release/RUNTIME-linux-$SUFFIX.json"
+      - name: Upload platform artifacts and runtime evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: XrayR-linux-64
+          name: XrayR-linux-${{ matrix.suffix }}
           if-no-files-found: error
-          path: |
-            out/release/XrayR-linux-64.zip
-            out/release/XrayR-linux-64.zip.sha256
-            out/release/BUILD-INFO.json
-            out/release/binary-build-info.txt
+          path: out/release/
 
   prerelease-assets:
-    # Never creates a release or promotes it to stable. Upload only to an
-    # existing prerelease explicitly published by a maintainer.
+    # Upload only after every required build and runtime gate has passed.
     if: github.event_name == 'release' && github.event.release.prerelease == true
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: XrayR-linux-64
+          pattern: XrayR-linux-*
+          merge-multiple: true
           path: dist
       - name: Verify and upload to the approved prerelease
         env:
@@ -67,5 +96,5 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           cd dist
-          sha256sum -c XrayR-linux-64.zip.sha256
-          gh release upload "$RELEASE_TAG" XrayR-linux-64.zip XrayR-linux-64.zip.sha256 BUILD-INFO.json
+          for checksum in *.zip.sha256; do sha256sum -c "$checksum"; done
+          gh release upload "$RELEASE_TAG" *.zip *.zip.sha256 BUILD-INFO-linux-*.json RUNTIME-linux-*.json
