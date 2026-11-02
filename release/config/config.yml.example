@@ -15,9 +15,9 @@ ConnectionConfig:
 Nodes:
   - PanelType: "NewV2board" # Panel type: SSpanel, NewV2board, PMpanel, Proxypanel, V2RaySocks, GoV2Panel
     ApiConfig:
-      ApiHost: "http://127.0.0.1:667"
+      ApiHost: "" # Configure the panel address locally
       ApiKey: "" # Generate/provide locally; never commit credentials
-      NodeID: 41
+      NodeID: 0 # Configure the node ID locally
       NodeType: V2ray # Node type: V2ray, Vmess, Vless, Shadowsocks, Trojan, Shadowsocks-Plugin
       Timeout: 30 # Timeout for the api request
       EnableVless: true # Enable Vless for V2ray Type
@@ -81,9 +81,9 @@ Nodes:
 
 #  - PanelType: "SSpanel" # Panel type: SSpanel, V2board, NewV2board, PMpanel, Proxypanel, V2RaySocks, GoV2Panel
 #    ApiConfig:
-#      ApiHost: "http://127.0.0.1:668"
+#      ApiHost: "" # Configure the panel address locally
 #      ApiKey: "" # Generate/provide locally; never commit credentials
-#      NodeID: 41
+#      NodeID: 0 # Configure the node ID locally
 #      NodeType: V2ray # Node type: V2ray, Shadowsocks, Trojan, Shadowsocks-Plugin
 #      Timeout: 30 # Timeout for the api request
 #      EnableVless: false # Enable Vless for V2ray Type
