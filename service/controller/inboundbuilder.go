@@ -207,6 +207,10 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 			streamSetting.Security = "reality"
 
 			r := nodeInfo.REALITYConfig
+			minClientVer := r.MinClientVer
+			if minClientVer == "" && config.REALITYConfigs != nil && config.REALITYConfigs.MinClientVer != "" {
+				minClientVer = config.REALITYConfigs.MinClientVer
+			}
 			show := false
 			if config.REALITYConfigs != nil {
 				show = config.REALITYConfigs.Show
@@ -217,7 +221,7 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 				Xver:         r.ProxyProtocolVer,
 				ServerNames:  r.ServerNames,
 				PrivateKey:   r.PrivateKey,
-				MinClientVer: r.MinClientVer,
+				MinClientVer: minClientVer,
 				MaxClientVer: r.MaxClientVer,
 				MaxTimeDiff:  r.MaxTimeDiff,
 				ShortIds:     r.ShortIds,
